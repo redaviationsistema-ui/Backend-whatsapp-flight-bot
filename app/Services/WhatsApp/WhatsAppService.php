@@ -93,9 +93,9 @@ class WhatsAppService
      */
     private function send(array $payload): array
     {
-        $phoneNumberId = config('whatsapp.phone_number_id');
-        $accessToken = config('whatsapp.access_token');
-        $apiVersion = config('whatsapp.api_version', 'v20.0');
+        $phoneNumberId = config('services.whatsapp.phone_number_id') ?? config('whatsapp.phone_number_id');
+        $accessToken = config('services.whatsapp.access_token') ?? config('whatsapp.access_token');
+        $apiVersion = config('services.whatsapp.api_version') ?? config('whatsapp.api_version', 'v20.0');
 
         if (! $phoneNumberId || ! $accessToken) {
             Log::warning('WhatsApp message not sent because credentials are missing.', [
@@ -110,6 +110,7 @@ class WhatsAppService
                 ->acceptJson()
                 ->connectTimeout(5)
                 ->timeout(15)
+                ->retry(2, 500)
                 ->post("https://graph.facebook.com/{$apiVersion}/{$phoneNumberId}/messages", $payload);
 
             if ($response->failed()) {

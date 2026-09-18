@@ -35,9 +35,12 @@ class WhatsAppWebhookTest extends TestCase
 
         $this->postJson('/api/webhooks/whatsapp', $this->payload('wamid.1', 'Hola'))
             ->assertOk()
-            ->assertContent('EVENT_RECEIVED');
+            ->assertJson(['received' => true]);
 
-        Queue::assertPushed(ProcessWhatsAppMessage::class);
+        Queue::assertPushed(
+            ProcessWhatsAppMessage::class,
+            fn (ProcessWhatsAppMessage $job): bool => isset($job->payload['entry'][0]['changes'][0]['value']['messages'][0]),
+        );
     }
 
     public function test_it_processes_conversation_flow_and_ignores_duplicate_message_ids(): void
@@ -48,6 +51,8 @@ class WhatsAppWebhookTest extends TestCase
             'flight_api.retry_times' => 0,
             'whatsapp.phone_number_id' => null,
             'whatsapp.access_token' => null,
+            'services.whatsapp.phone_number_id' => null,
+            'services.whatsapp.access_token' => null,
         ]);
 
         Http::fake([

@@ -4,9 +4,9 @@ namespace App\Http\Controllers\WhatsApp;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessWhatsAppMessage;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Log;
 
 class WhatsAppWebhookController extends Controller
 {
@@ -29,47 +29,55 @@ class WhatsAppWebhookController extends Controller
         return response('Forbidden', 403);
     }
 
-    public function receive(Request $request): Response
+    public function receive(Request $request): JsonResponse|Response
     {
-        if (($request->input('object') ?? null) !== 'whatsapp_business_account') {
-            return response('EVENT_RECEIVED', 200);
+        if (! $this->hasValidMetaSignature($request)) {
+            return response('Forbidden', 403);
         }
 
-        foreach ($this->incomingMessages($request->all()) as $messagePayload) {
-            ProcessWhatsAppMessage::dispatch($messagePayload);
+        $payload = $request->all();
+
+        if (($payload['object'] ?? null) !== 'whatsapp_business_account' || ! $this->hasIncomingMessages($payload)) {
+            return response()->json(['received' => true]);
         }
 
-        return response('EVENT_RECEIVED', 200);
+        ProcessWhatsAppMessage::dispatch($payload);
+
+        return response()->json(['received' => true]);
     }
 
     /**
-     * @return array<int, array<string, mixed>>
+     * @param  array<string, mixed>  $payload
      */
-    private function incomingMessages(array $payload): array
+    private function hasIncomingMessages(array $payload): bool
     {
-        $messages = [];
-
         foreach ($payload['entry'] ?? [] as $entry) {
             foreach ($entry['changes'] ?? [] as $change) {
-                $value = $change['value'] ?? [];
-                $contacts = collect($value['contacts'] ?? [])->keyBy('wa_id');
-
-                foreach ($value['messages'] ?? [] as $message) {
-                    $from = $message['from'] ?? null;
-
-                    if (! $from || ! isset($message['id'])) {
-                        continue;
-                    }
-
-                    $messages[] = [
-                        'message' => $message,
-                        'contact' => $contacts->get($from, []),
-                        'metadata' => $value['metadata'] ?? [],
-                    ];
+                if (! empty($change['value']['messages'] ?? [])) {
+                    return true;
                 }
             }
         }
 
-        return $messages;
+        return false;
+    }
+
+    private function hasValidMetaSignature(Request $request): bool
+    {
+        $appSecret = config('services.whatsapp.app_secret');
+
+        if (! $appSecret) {
+            return true;
+        }
+
+        $signature = (string) $request->header('X-Hub-Signature-256');
+
+        if (! str_starts_with($signature, 'sha256=')) {
+            return false;
+        }
+
+        $expected = 'sha256='.hash_hmac('sha256', $request->getContent(), (string) $appSecret);
+
+        return hash_equals($expected, $signature);
     }
 }

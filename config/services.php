@@ -41,6 +41,7 @@ return [
         'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
         'verify_token' => env('WHATSAPP_VERIFY_TOKEN'),
         'api_version' => env('WHATSAPP_API_VERSION'),
+        'app_secret' => env('META_APP_SECRET'),
     ],
 
 ];

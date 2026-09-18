@@ -19,7 +19,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 30;
+    public int $timeout = 60;
 
     public function __construct(public array $payload) {}
 
@@ -30,63 +30,15 @@ class ProcessWhatsAppMessage implements ShouldQueue
         WhatsAppService $whatsAppService,
     ): void {
         try {
-            $message = $this->payload['message'] ?? [];
-            $messageId = (string) ($message['id'] ?? '');
-            $from = (string) ($message['from'] ?? '');
-
-            if ($messageId === '' || $from === '') {
-                Log::warning('WhatsApp inbound message skipped because identifiers are missing.', [
-                    'payload' => $this->payload,
-                ]);
-
-                return;
-            }
-
-            if ($messageService->messageExists($messageId)) {
-                Log::info('WhatsApp inbound message skipped because it was already processed.', [
-                    'message_id' => $messageId,
-                ]);
-
-                return;
-            }
-
-            $conversation = DB::transaction(function () use ($conversationService, $messageService, $message, $messageId, $from): WhatsAppConversation {
-                $contactPayload = $this->payload['contact'] ?? [];
-                $profile = $contactPayload['profile'] ?? [];
-
-                $contact = $conversationService->findOrCreateContact(
-                    $from,
-                    $profile['name'] ?? null,
-                    ['wa_id' => $contactPayload['wa_id'] ?? $from],
+            foreach ($this->messagePayloads() as $messagePayload) {
+                $this->processMessagePayload(
+                    $messagePayload,
+                    $conversationService,
+                    $messageService,
+                    $chatbotService,
+                    $whatsAppService,
                 );
-
-                $conversation = $conversationService->findOrCreateActiveConversation($contact);
-
-                $messageService->storeInboundMessage(
-                    $conversation,
-                    $messageId,
-                    (string) ($message['type'] ?? 'unknown'),
-                    $this->extractText($message),
-                    $message,
-                    isset($message['timestamp']) ? (int) $message['timestamp'] : null,
-                );
-
-                return $conversation->refresh();
-            });
-
-            $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
-            $result = $chatbotService->handleIncomingMessage($conversation, $flightRequest, $this->extractText($message) ?? '');
-
-            if ($result['state'] === 'TRANSFER_TO_HUMAN') {
-                $conversationService->transferToHuman($conversation);
-            } else {
-                $conversationService->moveToState($conversation, $result['state']);
             }
-
-            $messageService->storeOutboundMessage($conversation, $result['message']);
-            $whatsAppService->sendTextMessage($from, $result['message']);
-
-            $this->continueAutomatedFlow($conversation->refresh(), $from, $conversationService, $messageService, $chatbotService, $whatsAppService);
         } catch (Throwable $throwable) {
             Log::error('WhatsApp inbound message processing failed.', [
                 'error' => $throwable->getMessage(),
@@ -95,6 +47,114 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
             throw $throwable;
         }
+    }
+
+    /**
+     * @return array<int, array{message:array<string, mixed>, contact:array<string, mixed>, metadata:array<string, mixed>}>
+     */
+    private function messagePayloads(): array
+    {
+        if (isset($this->payload['message'])) {
+            return [[
+                'message' => $this->payload['message'],
+                'contact' => $this->payload['contact'] ?? [],
+                'metadata' => $this->payload['metadata'] ?? [],
+            ]];
+        }
+
+        $messages = [];
+
+        foreach ($this->payload['entry'] ?? [] as $entry) {
+            foreach ($entry['changes'] ?? [] as $change) {
+                $value = $change['value'] ?? [];
+                $contacts = collect($value['contacts'] ?? [])->keyBy('wa_id');
+
+                foreach ($value['messages'] ?? [] as $message) {
+                    $from = $message['from'] ?? null;
+
+                    if (! $from || ! isset($message['id'])) {
+                        continue;
+                    }
+
+                    $messages[] = [
+                        'message' => $message,
+                        'contact' => $contacts->get($from, []),
+                        'metadata' => $value['metadata'] ?? [],
+                    ];
+                }
+            }
+        }
+
+        return $messages;
+    }
+
+    /**
+     * @param  array{message:array<string, mixed>, contact:array<string, mixed>, metadata:array<string, mixed>}  $messagePayload
+     */
+    private function processMessagePayload(
+        array $messagePayload,
+        WhatsAppConversationService $conversationService,
+        WhatsAppMessageService $messageService,
+        WhatsAppChatbotService $chatbotService,
+        WhatsAppService $whatsAppService,
+    ): void {
+        $message = $messagePayload['message'];
+        $messageId = (string) ($message['id'] ?? '');
+        $from = (string) ($message['from'] ?? '');
+
+        if ($messageId === '' || $from === '') {
+            Log::warning('WhatsApp inbound message skipped because identifiers are missing.', [
+                'payload' => $messagePayload,
+            ]);
+
+            return;
+        }
+
+        if ($messageService->messageExists($messageId)) {
+            Log::info('WhatsApp inbound message skipped because it was already processed.', [
+                'message_id' => $messageId,
+            ]);
+
+            return;
+        }
+
+        $conversation = DB::transaction(function () use ($conversationService, $messageService, $messagePayload, $message, $messageId, $from): WhatsAppConversation {
+            $contactPayload = $messagePayload['contact'];
+            $profile = $contactPayload['profile'] ?? [];
+
+            $contact = $conversationService->findOrCreateContact(
+                $from,
+                $profile['name'] ?? null,
+                ['wa_id' => $contactPayload['wa_id'] ?? $from],
+            );
+
+            $conversation = $conversationService->findOrCreateActiveConversation($contact);
+
+            $messageService->storeInboundMessage(
+                $conversation,
+                $messageId,
+                (string) ($message['type'] ?? 'unknown'),
+                $this->extractText($message),
+                $message,
+                isset($message['timestamp']) ? (int) $message['timestamp'] : null,
+            );
+
+            return $conversation->refresh();
+        });
+
+        $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
+        $result = $chatbotService->handleIncomingMessage($conversation, $flightRequest, $this->extractText($message) ?? '');
+
+        if ($result['state'] === 'TRANSFER_TO_HUMAN') {
+            $conversationService->transferToHuman($conversation);
+        } else {
+            $conversationService->moveToState($conversation, $result['state']);
+        }
+
+        $messageService->storeOutboundMessage($conversation, $result['message']);
+        $whatsAppService->sendTextMessage($from, $result['message']);
+
+        $this->continueAutomatedFlow($conversation->refresh(), $from, $conversationService, $messageService, $chatbotService, $whatsAppService);
     }
 
     /**
