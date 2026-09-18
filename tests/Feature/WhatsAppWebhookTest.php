@@ -46,6 +46,8 @@ class WhatsAppWebhookTest extends TestCase
             'flight_api.base_url' => 'https://backend.test',
             'flight_api.token' => 'plain-api-token',
             'flight_api.retry_times' => 0,
+            'whatsapp.phone_number_id' => null,
+            'whatsapp.access_token' => null,
         ]);
 
         Http::fake([
