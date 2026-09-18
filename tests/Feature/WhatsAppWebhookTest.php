@@ -114,6 +114,32 @@ class WhatsAppWebhookTest extends TestCase
             && $request['idempotency_key'] === 'whatsapp-'.$flightRequest->id);
     }
 
+    public function test_first_hola_message_creates_conversation_and_welcome_response(): void
+    {
+        config([
+            'whatsapp.phone_number_id' => null,
+            'whatsapp.access_token' => null,
+            'services.whatsapp.phone_number_id' => null,
+            'services.whatsapp.access_token' => null,
+        ]);
+
+        $this->process('wamid.hola', 'hola');
+
+        $conversation = WhatsAppConversation::query()->firstOrFail();
+
+        $this->assertSame('ASK_ORIGIN', $conversation->state);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'wamid.hola',
+            'direction' => 'inbound',
+            'body' => 'hola',
+        ]);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => null,
+            'direction' => 'outbound',
+            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?",
+        ]);
+    }
+
     private function process(string $messageId, string $text): void
     {
         $payload = $this->payload($messageId, $text);

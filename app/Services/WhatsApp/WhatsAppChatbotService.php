@@ -82,7 +82,7 @@ class WhatsAppChatbotService
     {
         return [
             'state' => 'ASK_ORIGIN',
-            'message' => 'Hola. Para cotizar tu vuelo privado, dime el origen de salida.',
+            'message' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?",
         ];
     }
 

@@ -6,6 +6,7 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Throwable;
 
 class WhatsAppService
 {
@@ -100,18 +101,34 @@ class WhatsAppService
         if (! $phoneNumberId || ! $accessToken) {
             Log::warning('WhatsApp message not sent because credentials are missing.', [
                 'to' => $payload['to'] ?? null,
+                'has_phone_number_id' => (bool) $phoneNumberId,
+                'has_access_token' => (bool) $accessToken,
             ]);
 
             return [];
         }
 
         try {
+            $url = "https://graph.facebook.com/{$apiVersion}/{$phoneNumberId}/messages";
+
+            Log::info('Sending WhatsApp message through Meta API.', [
+                'url' => $url,
+                'to' => $payload['to'] ?? null,
+                'type' => $payload['type'] ?? null,
+                'body_length' => strlen((string) data_get($payload, 'text.body', '')),
+            ]);
+
             $response = Http::withToken($accessToken)
                 ->acceptJson()
                 ->connectTimeout(5)
                 ->timeout(15)
                 ->retry(2, 500)
-                ->post("https://graph.facebook.com/{$apiVersion}/{$phoneNumberId}/messages", $payload);
+                ->post($url, $payload);
+
+            Log::info('Meta WhatsApp API response received.', [
+                'status' => $response->status(),
+                'response' => $response->json(),
+            ]);
 
             if ($response->failed()) {
                 Log::error('WhatsApp Meta API error.', [
@@ -129,6 +146,13 @@ class WhatsAppService
             ]);
 
             throw $exception;
+        } catch (Throwable $throwable) {
+            Log::error('WhatsApp message send failed.', [
+                'error' => $throwable->getMessage(),
+                'to' => $payload['to'] ?? null,
+            ]);
+
+            throw $throwable;
         }
     }
 }

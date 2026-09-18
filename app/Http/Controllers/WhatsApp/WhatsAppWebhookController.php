@@ -7,6 +7,7 @@ use App\Jobs\ProcessWhatsAppMessage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 
 class WhatsAppWebhookController extends Controller
 {
@@ -31,17 +32,40 @@ class WhatsAppWebhookController extends Controller
 
     public function receive(Request $request): JsonResponse|Response
     {
+        Log::info('WhatsApp webhook POST received.', [
+            'object' => $request->input('object'),
+            'has_entries' => ! empty($request->input('entry', [])),
+            'queue_connection' => config('queue.default'),
+        ]);
+
         if (! $this->hasValidMetaSignature($request)) {
+            Log::warning('WhatsApp webhook rejected because Meta signature is invalid.');
+
             return response('Forbidden', 403);
         }
 
         $payload = $request->all();
+        $messageCount = $this->incomingMessageCount($payload);
 
-        if (($payload['object'] ?? null) !== 'whatsapp_business_account' || ! $this->hasIncomingMessages($payload)) {
+        Log::info('WhatsApp webhook payload inspected.', [
+            'object' => $payload['object'] ?? null,
+            'message_count' => $messageCount,
+            'first_from' => data_get($payload, 'entry.0.changes.0.value.messages.0.from'),
+            'first_message_id' => data_get($payload, 'entry.0.changes.0.value.messages.0.id'),
+            'first_type' => data_get($payload, 'entry.0.changes.0.value.messages.0.type'),
+            'first_text_body_present' => data_get($payload, 'entry.0.changes.0.value.messages.0.text.body') !== null,
+        ]);
+
+        if (($payload['object'] ?? null) !== 'whatsapp_business_account' || $messageCount === 0) {
             return response()->json(['received' => true]);
         }
 
         ProcessWhatsAppMessage::dispatch($payload);
+
+        Log::info('WhatsApp webhook message payload dispatched.', [
+            'message_count' => $messageCount,
+            'queue_connection' => config('queue.default'),
+        ]);
 
         return response()->json(['received' => true]);
     }
@@ -51,15 +75,23 @@ class WhatsAppWebhookController extends Controller
      */
     private function hasIncomingMessages(array $payload): bool
     {
+        return $this->incomingMessageCount($payload) > 0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function incomingMessageCount(array $payload): int
+    {
+        $count = 0;
+
         foreach ($payload['entry'] ?? [] as $entry) {
             foreach ($entry['changes'] ?? [] as $change) {
-                if (! empty($change['value']['messages'] ?? [])) {
-                    return true;
-                }
+                $count += count($change['value']['messages'] ?? []);
             }
         }
 
-        return false;
+        return $count;
     }
 
     private function hasValidMetaSignature(Request $request): bool
@@ -73,6 +105,10 @@ class WhatsAppWebhookController extends Controller
         $signature = (string) $request->header('X-Hub-Signature-256');
 
         if (! str_starts_with($signature, 'sha256=')) {
+            Log::warning('WhatsApp webhook signature header is missing or malformed.', [
+                'has_signature' => $signature !== '',
+            ]);
+
             return false;
         }
 

@@ -40,7 +40,7 @@ return [
         'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
         'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
         'verify_token' => env('WHATSAPP_VERIFY_TOKEN'),
-        'api_version' => env('WHATSAPP_API_VERSION'),
+        'api_version' => env('WHATSAPP_API_VERSION', 'v26.0'),
         'app_secret' => env('META_APP_SECRET'),
     ],
 

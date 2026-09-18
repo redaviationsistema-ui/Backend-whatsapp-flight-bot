@@ -30,7 +30,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
         WhatsAppService $whatsAppService,
     ): void {
         try {
-            foreach ($this->messagePayloads() as $messagePayload) {
+            $messagePayloads = $this->messagePayloads();
+
+            Log::info('WhatsApp message job started.', [
+                'message_count' => count($messagePayloads),
+                'queue_connection' => config('queue.default'),
+            ]);
+
+            foreach ($messagePayloads as $messagePayload) {
                 $this->processMessagePayload(
                     $messagePayload,
                     $conversationService,
@@ -39,6 +46,10 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     $whatsAppService,
                 );
             }
+
+            Log::info('WhatsApp message job finished.', [
+                'message_count' => count($messagePayloads),
+            ]);
         } catch (Throwable $throwable) {
             Log::error('WhatsApp inbound message processing failed.', [
                 'error' => $throwable->getMessage(),
@@ -101,6 +112,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
         $message = $messagePayload['message'];
         $messageId = (string) ($message['id'] ?? '');
         $from = (string) ($message['from'] ?? '');
+        $text = $this->extractText($message);
+
+        Log::info('WhatsApp inbound message extracted.', [
+            'message_id' => $messageId,
+            'from' => $from,
+            'type' => $message['type'] ?? null,
+            'has_text_body' => $text !== null,
+        ]);
 
         if ($messageId === '' || $from === '') {
             Log::warning('WhatsApp inbound message skipped because identifiers are missing.', [
@@ -142,8 +161,21 @@ class ProcessWhatsAppMessage implements ShouldQueue
             return $conversation->refresh();
         });
 
+        Log::info('WhatsApp inbound message persisted.', [
+            'message_id' => $messageId,
+            'conversation_id' => $conversation->id,
+            'state' => $conversation->state,
+        ]);
+
         $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
-        $result = $chatbotService->handleIncomingMessage($conversation, $flightRequest, $this->extractText($message) ?? '');
+        $result = $chatbotService->handleIncomingMessage($conversation, $flightRequest, $text ?? '');
+
+        Log::info('WhatsApp chatbot produced response.', [
+            'message_id' => $messageId,
+            'conversation_id' => $conversation->id,
+            'next_state' => $result['state'],
+            'response_length' => strlen($result['message']),
+        ]);
 
         if ($result['state'] === 'TRANSFER_TO_HUMAN') {
             $conversationService->transferToHuman($conversation);
@@ -153,6 +185,11 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
         $messageService->storeOutboundMessage($conversation, $result['message']);
         $whatsAppService->sendTextMessage($from, $result['message']);
+
+        Log::info('WhatsApp chatbot response sent.', [
+            'message_id' => $messageId,
+            'to' => $from,
+        ]);
 
         $this->continueAutomatedFlow($conversation->refresh(), $from, $conversationService, $messageService, $chatbotService, $whatsAppService);
     }
@@ -215,6 +252,11 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
             $messageService->storeOutboundMessage($conversation, $result['message']);
             $whatsAppService->sendTextMessage($to, $result['message']);
+            Log::info('WhatsApp automated state response sent.', [
+                'conversation_id' => $conversation->id,
+                'state' => $result['state'],
+                'to' => $to,
+            ]);
             $conversation = $conversation->refresh();
         }
     }
