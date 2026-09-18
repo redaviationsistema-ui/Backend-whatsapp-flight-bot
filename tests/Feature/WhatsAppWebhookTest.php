@@ -21,7 +21,7 @@ class WhatsAppWebhookTest extends TestCase
 
     public function test_it_validates_meta_webhook_challenge(): void
     {
-        config(['whatsapp.verify_token' => 'secret-token']);
+        config(['services.whatsapp.verify_token' => 'secret-token']);
 
         $response = $this->get('/api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=secret-token&hub.challenge=abc123');
 
