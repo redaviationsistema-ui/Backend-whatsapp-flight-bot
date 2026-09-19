@@ -91,6 +91,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                         'message' => $message,
                         'contact' => $contacts->get($from, []),
                         'metadata' => $value['metadata'] ?? [],
+                        'waba_id' => $entry['id'] ?? null,
                     ];
                 }
             }
@@ -100,7 +101,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
     }
 
     /**
-     * @param  array{message:array<string, mixed>, contact:array<string, mixed>, metadata:array<string, mixed>}  $messagePayload
+     * @param  array{message:array<string, mixed>, contact:array<string, mixed>, metadata:array<string, mixed>, waba_id?:mixed}  $messagePayload
      */
     private function processMessagePayload(
         array $messagePayload,
@@ -119,6 +120,9 @@ class ProcessWhatsAppMessage implements ShouldQueue
             'from' => $from,
             'type' => $message['type'] ?? null,
             'has_text_body' => $text !== null,
+            'incoming_waba_id' => $messagePayload['waba_id'] ?? null,
+            'incoming_phone_number_id' => $messagePayload['metadata']['phone_number_id'] ?? null,
+            'configured_phone_number_id' => config('services.whatsapp.phone_number_id'),
         ]);
 
         if ($messageId === '' || $from === '') {

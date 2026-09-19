@@ -36,6 +36,9 @@ class WhatsAppWebhookController extends Controller
             'object' => $request->input('object'),
             'has_entries' => ! empty($request->input('entry', [])),
             'queue_connection' => config('queue.default'),
+            'configured_phone_number_id' => config('services.whatsapp.phone_number_id'),
+            'incoming_waba_id' => $request->input('entry.0.id'),
+            'incoming_phone_number_id' => $request->input('entry.0.changes.0.value.metadata.phone_number_id'),
         ]);
 
         if (! $this->hasValidMetaSignature($request)) {
@@ -54,6 +57,9 @@ class WhatsAppWebhookController extends Controller
             'first_message_id' => data_get($payload, 'entry.0.changes.0.value.messages.0.id'),
             'first_type' => data_get($payload, 'entry.0.changes.0.value.messages.0.type'),
             'first_text_body_present' => data_get($payload, 'entry.0.changes.0.value.messages.0.text.body') !== null,
+            'incoming_waba_id' => data_get($payload, 'entry.0.id'),
+            'incoming_phone_number_id' => data_get($payload, 'entry.0.changes.0.value.metadata.phone_number_id'),
+            'configured_phone_number_id' => config('services.whatsapp.phone_number_id'),
         ]);
 
         if (($payload['object'] ?? null) !== 'whatsapp_business_account' || $messageCount === 0) {

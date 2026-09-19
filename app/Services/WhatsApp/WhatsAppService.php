@@ -116,6 +116,8 @@ class WhatsAppService
                 'to' => $payload['to'] ?? null,
                 'type' => $payload['type'] ?? null,
                 'body_length' => strlen((string) data_get($payload, 'text.body', '')),
+                'api_version' => $apiVersion,
+                'configured_phone_number_id' => $phoneNumberId,
             ]);
 
             $response = Http::withToken($accessToken)
