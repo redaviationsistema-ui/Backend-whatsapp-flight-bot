@@ -6,11 +6,13 @@ use App\Models\WhatsAppMessage;
 use App\Services\WhatsApp\WhatsAppChatbotService;
 use App\Services\WhatsApp\WhatsAppConversationService;
 use App\Services\WhatsApp\WhatsAppMessageService;
+use App\Services\WhatsApp\WhatsAppSendRejectedException;
 use App\Services\WhatsApp\WhatsAppService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 class ProcessWhatsAppMessage implements ShouldQueue
@@ -46,6 +48,8 @@ class ProcessWhatsAppMessage implements ShouldQueue
             $conversationService->withContactLock($from, function () use ($payload, $message, $messageId, $from, $conversationService, $messageService, $chatbotService, $whatsAppService): void {
                 $inbound = WhatsAppMessage::query()->where('message_id', $messageId)->first();
                 if ($inbound?->processed_at) {
+                    $this->logAction($inbound, 'skip_processed');
+
                     return;
                 }
                 if (! $inbound) {
@@ -67,9 +71,17 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
     private function processInbound(WhatsAppMessage $inbound, WhatsAppConversationService $conversationService, WhatsAppMessageService $messageService, WhatsAppChatbotService $chatbotService, WhatsAppService $whatsAppService): void
     {
+        $inbound->refresh();
+        if ($inbound->processed_at) {
+            $this->logAction($inbound, 'skip_processed');
+
+            return;
+        }
         $conversation = $inbound->conversation()->firstOrFail();
+        $inbound->setRelation('conversation', $conversation);
         if (($conversation->transferred_to_human_at || $conversation->state === 'TRANSFER_TO_HUMAN') && ! isset($inbound->processing_context['pending_response'])) {
             $inbound->update(['processed_at' => now(), 'processing_context' => null]);
+            $this->logAction($inbound, 'skip_human_mode');
 
             return;
         }
@@ -80,6 +92,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     break;
                 }
                 DB::transaction(function () use ($inbound, $conversation, $context, $conversationService, $chatbotService): void {
+                    $this->logAction($inbound, ($context['input_applied'] ?? false) ? 'continue_state' : 'apply_input');
                     $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
                     $result = ($context['input_applied'] ?? false)
                         ? $chatbotService->continueAutomatedState($conversation, $flightRequest)
@@ -89,22 +102,71 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     } else {
                         $conversationService->moveToState($conversation, $result['state']);
                     }
-                    $inbound->update(['processing_context' => ['input_applied' => true, 'pending_response' => $result['message']]]);
+                    $inbound->update(['processing_context' => ['input_applied' => true, 'pending_response' => $result['message'], 'pending_state' => $result['state']]]);
                 });
             }
             $body = $inbound->processing_context['pending_response'];
             if ($body !== '') {
-                $response = $whatsAppService->sendTextMessage($conversation->contact->phone_number, $body);
+                $response = $this->sendPendingReply($inbound, $whatsAppService);
                 DB::transaction(function () use ($messageService, $conversation, $body, $response, $inbound): void {
                     $messageService->storeOutboundMessage($conversation, $body, $response);
                     $inbound->update(['processing_context' => ['input_applied' => true]]);
                 });
+                $this->logAction($inbound, 'reply_recorded');
             } else {
                 $inbound->update(['processing_context' => ['input_applied' => true]]);
             }
             $conversation->refresh();
         } while (in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'CREATE_QUOTE'], true));
         $inbound->update(['processed_at' => now(), 'processing_context' => null]);
+        $this->logAction($inbound, 'processed');
+    }
+
+    /** @return array<string, mixed> */
+    private function sendPendingReply(WhatsAppMessage $inbound, WhatsAppService $whatsAppService): array
+    {
+        $context = $inbound->processing_context;
+        if (isset($context['sent_response'])) {
+            $this->logAction($inbound, 'resume_accepted_reply');
+
+            return $context['sent_response'];
+        }
+        if ($context['send_started'] ?? false) {
+            $this->logAction($inbound, 'send_uncertain');
+
+            throw new RuntimeException('WhatsApp reply requires reconciliation before retrying an uncertain send.');
+        }
+
+        $inbound->update(['processing_context' => [...$context, 'send_started' => true]]);
+        $this->logAction($inbound, 'send_reply');
+
+        try {
+            $response = $whatsAppService->sendTextMessage($inbound->conversation->contact->phone_number, $context['pending_response']);
+        } catch (WhatsAppSendRejectedException $exception) {
+            $inbound->update(['processing_context' => $context]);
+            $this->logAction($inbound, 'send_rejected');
+
+            throw $exception;
+        } catch (Throwable $exception) {
+            $this->logAction($inbound, 'send_uncertain');
+
+            throw $exception;
+        }
+
+        $inbound->update(['processing_context' => [...$context, 'send_started' => true, 'sent_response' => $response]]);
+        $this->logAction($inbound, 'send_accepted');
+
+        return $response;
+    }
+
+    private function logAction(WhatsAppMessage $inbound, string $action): void
+    {
+        Log::info('WhatsApp inbound processing.', [
+            'incoming_message_id' => $inbound->message_id,
+            'conversation_id' => $inbound->whats_app_conversation_id,
+            'state' => $inbound->processing_context['pending_state'] ?? $inbound->conversation->state,
+            'action' => $action,
+        ]);
     }
 
     public function failed(?Throwable $exception): void

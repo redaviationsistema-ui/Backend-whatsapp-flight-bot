@@ -105,7 +105,7 @@ class WhatsAppService
                 'has_access_token' => (bool) $accessToken,
             ]);
 
-            throw new RuntimeException('WhatsApp credentials are not configured.');
+            throw new WhatsAppSendRejectedException('WhatsApp credentials are not configured.');
         }
 
         try {
@@ -137,7 +137,11 @@ class WhatsAppService
                     'response' => $response->json(),
                 ]);
 
-                throw new RuntimeException('Meta WhatsApp API request failed.');
+                if ($response->json('error') !== null || $response->clientError()) {
+                    throw new WhatsAppSendRejectedException('Meta WhatsApp API request failed.');
+                }
+
+                throw new RuntimeException('Meta WhatsApp send outcome is unknown.');
             }
 
             return $response->json() ?? [];

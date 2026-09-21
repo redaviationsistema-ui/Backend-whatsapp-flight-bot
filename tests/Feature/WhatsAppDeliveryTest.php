@@ -104,7 +104,7 @@ class WhatsAppDeliveryTest extends TestCase
     {
         config(['services.whatsapp.phone_number_id' => '123', 'services.whatsapp.access_token' => 'test-token']);
         Http::preventStrayRequests();
-        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()->push([], 500)->push(['messages' => [['id' => 'out.handoff']]])]);
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()->push(['error' => ['message' => 'Message rejected']], 500)->push(['messages' => [['id' => 'out.handoff']]])]);
         try {
             $this->process('in.handoff', 'asesor');
             $this->fail('Expected send failure.');
@@ -204,7 +204,7 @@ class WhatsAppDeliveryTest extends TestCase
         Http::fake([
             'https://graph.facebook.com/*/123/messages' => Http::sequence()
                 ->push(['messages' => [['id' => 'out.search']]])
-                ->push([], 500)
+                ->push(['error' => ['message' => 'Message rejected']], 500)
                 ->push(['messages' => [['id' => 'out.options']]]),
             'https://backend.test/api/v1/client/quotes/preview' => Http::response(['options' => [['aircraft_id' => 101, 'aircraft_name' => 'Jet']]]),
         ]);
