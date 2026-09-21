@@ -36,7 +36,7 @@ class WhatsAppChatbotService
         'ASK_NAME' => ['field' => 'client_name', 'label' => 'Nombre', 'prompt' => '¿Cuál es tu nombre completo?', 'type' => 'text'],
         'ASK_EMAIL' => ['field' => 'client_email', 'label' => 'Correo', 'prompt' => '¿Cuál es tu correo electrónico?', 'type' => 'email'],
         'ASK_COMPANY' => ['field' => 'company', 'label' => 'Empresa', 'prompt' => '¿Cotizas para alguna empresa?', 'type' => 'optional'],
-        'ASK_BUDGET' => ['field' => 'budget', 'label' => 'Presupuesto', 'prompt' => '¿Tienes un presupuesto aproximado?', 'type' => 'optional'],
+        'ASK_BUDGET' => ['field' => 'budget', 'label' => 'Presupuesto', 'prompt' => '¿Tienes un presupuesto aproximado?', 'type' => 'money'],
         'ASK_NOTES' => ['field' => 'notes', 'label' => 'Observaciones', 'prompt' => '¿Algo más que debamos saber?', 'type' => 'text'],
     ];
 
@@ -398,9 +398,10 @@ class WhatsAppChatbotService
             'boolean', 'pets' => $this->parseBoolean($normalized, $question['type'] === 'pets'),
             'email' => filter_var($message, FILTER_VALIDATE_EMAIL) ?: null,
             'trip' => $this->parseTripType($normalized),
+            'money' => $this->parseMoney($normalized),
             default => $message,
         };
-        if ($value === null || (in_array($question['type'], ['passengers', 'count'], true) && $value === false)) {
+        if (($value === null && $question['type'] !== 'money') || ($value === false && in_array($question['type'], ['passengers', 'count', 'money'], true))) {
             return $this->question($state, $this->invalidMessage($question['type'], $question['label']), $flightRequest);
         }
         if ($question['type'] === 'date' && $parsedDate?->lt(Carbon::today(config('whatsapp.timezone')))) {
@@ -419,6 +420,9 @@ class WhatsAppChatbotService
             return $this->question($state, 'La hora de regreso debe ser después de la salida. ¿Qué hora prefieres?', $flightRequest);
         }
         if ($question['type'] === 'optional' && $this->isNegative($normalized)) {
+            $value = null;
+        }
+        if ($question['type'] === 'text' && $this->isNegative($normalized)) {
             $value = null;
         }
         $attributes = [$field => $value];
@@ -647,7 +651,7 @@ class WhatsAppChatbotService
     private function invalidState(WhatsAppFlightRequest $flightRequest): ?string
     {
         foreach (self::QUESTIONS as $state => $question) {
-            if (in_array($question['field'], ['company', 'budget', 'legs', 'return_date', 'return_time'], true)) {
+            if (in_array($question['field'], ['company', 'budget', 'legs', 'return_date', 'return_time', 'luggage_description', 'special_luggage', 'aircraft_preference', 'other_services', 'notes'], true)) {
                 continue;
             }
             if ($flightRequest->{$question['field']} === null || $flightRequest->{$question['field']} === '') {
@@ -751,11 +755,20 @@ class WhatsAppChatbotService
 
     private function parseBoolean(string $message, bool $allowDetails = false): ?bool
     {
-        if ($this->isAffirmative($message) || ($allowDetails && preg_match('/^si[ ,:]/', $message))) {
+        if ($this->isAffirmative($message) || str_contains($message, 'por favor') || str_contains($message, 'si necesitamos') || ($allowDetails && preg_match('/^si[ ,:]/', $message))) {
             return true;
         }
 
-        return $this->isNegative($message) ? false : null;
+        if ($this->isNegative($message)
+            || str_contains($message, 'no gracias')
+            || str_contains($message, 'por el momento no')
+            || str_contains($message, 'no necesito')
+            || str_starts_with($message, 'sin ')
+        ) {
+            return false;
+        }
+
+        return null;
     }
 
     private function isAffirmative(string $message): bool
@@ -765,7 +778,7 @@ class WhatsAppChatbotService
 
     private function isNegative(string $message): bool
     {
-        return in_array($message, ['no', 'n', '2', '0', 'ninguno', 'ninguna', 'nada', 'sin', 'omitir', 'terminar', 'ya esta', 'ya está'], true);
+        return in_array($message, ['no', 'n', '2', '0', 'ninguno', 'ninguna', 'nada', 'sin', 'omitir', 'terminar', 'ya esta', 'ya está', 'no tengo', 'aun no', 'aún no', 'no se', 'no sé', 'flexible', 'sin presupuesto', 'sin presupuesto definido'], true);
     }
 
     private function isFinished(string $message): bool
@@ -782,6 +795,27 @@ class WhatsAppChatbotService
             $count = (int) $match[1];
 
             return $count >= ($allowZero ? 0 : 1) && $count <= 99 ? $count : false;
+        }
+
+        return false;
+    }
+
+    private function parseMoney(string $message): int|false|null
+    {
+        if ($this->isNegative($message)) {
+            return null;
+        }
+
+        $clean = str_replace([',', '$'], '', $message);
+        $clean = preg_replace('/\b(?:aprox|aproximadamente|unos|como|alrededor de|usd|dolares|dolares americanos|mxn|pesos)\b/', ' ', $clean) ?? $clean;
+        $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? $clean);
+
+        if (preg_match('/(\d+(?:\.\d+)?)\s*mil\b/', $clean, $match)) {
+            return (int) round(((float) $match[1]) * 1000);
+        }
+
+        if (preg_match('/\b(\d{3,9})(?:\.\d{1,2})?\b/', $clean, $match)) {
+            return (int) $match[1];
         }
 
         return false;
@@ -807,6 +841,7 @@ class WhatsAppChatbotService
             'boolean', 'pets' => 'Necesito una respuesta de sí o no.',
             'email' => 'Ese correo no parece válido.',
             'trip' => 'Necesito saber si es sólo ida, ida y vuelta o multidestino.',
+            'money' => "No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.",
             default => 'No entendí ese dato.',
         };
     }

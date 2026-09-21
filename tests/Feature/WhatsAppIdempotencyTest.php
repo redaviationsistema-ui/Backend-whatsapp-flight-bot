@@ -658,6 +658,115 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertSame('TLC', $flight->refresh()->destination);
     }
 
+    public function test_invalid_budget_does_not_throw_or_update_request(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.invalid-budget']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_BUDGET']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['budget' => null]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.invalid-budget', 'text' => ['body' => 'Demo']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_BUDGET', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->budget);
+        $this->assertNotNull(WhatsAppMessage::query()->where('message_id', 'in.invalid-budget')->sole()->processed_at);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.invalid-budget',
+            'body' => "No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.\n¿Tienes un presupuesto aproximado?",
+        ]);
+    }
+
+    public function test_valid_budget_is_normalized_before_update(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.valid-budget']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_BUDGET']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['budget' => null]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.valid-budget', 'text' => ['body' => '20,000 USD']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_NOTES', $conversation->refresh()->state);
+        $this->assertEquals(20000, $flight->refresh()->budget);
+    }
+
+    public function test_budget_can_be_skipped_without_storing_text(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.no-budget']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_BUDGET']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['budget' => null]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.no-budget', 'text' => ['body' => 'sin presupuesto definido']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_NOTES', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->budget);
+    }
+
+    public function test_invalid_passenger_count_keeps_state_without_update(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.invalid-passengers']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_PASSENGERS']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['passengers' => null]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.invalid-passengers', 'text' => ['body' => 'varios']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_PASSENGERS', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->passengers);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.invalid-passengers',
+            'body' => "Necesito cuántas personas viajan.\n¿Cuántas personas viajan?",
+        ]);
+    }
+
+    public function test_natural_boolean_answer_is_normalized_before_update(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.catering']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_CATERING']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['catering_required' => null]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.catering', 'text' => ['body' => 'por el momento no']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_GROUND_TRANSPORT', $conversation->refresh()->state);
+        $this->assertFalse($flight->refresh()->catering_required);
+    }
+
+    public function test_invalid_email_keeps_state_without_update(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.invalid-email']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_EMAIL']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['client_email' => null]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.invalid-email', 'text' => ['body' => 'correo malo']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_EMAIL', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->client_email);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.invalid-email',
+            'body' => "Ese correo no parece válido.\n¿Cuál es tu correo electrónico?",
+        ]);
+    }
+
     /** @param array<string, mixed>|null $value */
     private function webhook(?array $value = null): TestResponse
     {
