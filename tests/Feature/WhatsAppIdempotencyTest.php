@@ -280,7 +280,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertSame($origin, $flight->origin);
         $this->assertNull($flight->destination);
         $this->assertSame('ASK_DESTINATION', $conversation->refresh()->state);
-        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.origin', 'body' => '¿Cuál es el destino?']);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.origin', 'body' => "Perfecto, saliendo de {$origin}. ¿A dónde te gustaría volar?"]);
 
         $this->webhook($destinationMessage)->assertOk();
         $this->webhook($originMessage)->assertOk();
@@ -385,7 +385,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNull($flight->refresh()->departure_date);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.past-date',
-            'body' => "La fecha de salida debe ser futura.\nIndica la fecha de salida (AAAA-MM-DD o una fecha relativa).",
+            'body' => "Esa fecha ya pasó. ¿Qué otra fecha tienes en mente?\nPerfecto, Querétaro → Cancún. ¿Para qué día tienes pensado viajar?",
         ]);
     }
 
@@ -409,8 +409,253 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertSame('2026-10-02', $flight->refresh()->departure_date->toDateString());
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.future-date',
-            'body' => '¿A qué hora deseas salir? Usa el formato HH:MM.',
+            'body' => '¿A qué hora te gustaría salir?',
         ]);
+    }
+
+    public function test_help_message_keeps_current_state_and_does_not_change_request(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.help']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_DEPARTURE_DATE']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Querétaro',
+            'destination' => 'Cancún',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.help', 'text' => ['body' => 'no entiendo']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_DEPARTURE_DATE', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->departure_date);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.help',
+            'body' => 'Puedes decir mañana, el próximo viernes o 2026-10-02.',
+        ]);
+    }
+
+    public function test_natural_passenger_answer_is_accepted(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.passengers']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_PASSENGERS']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Querétaro',
+            'destination' => 'Cancún',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '09:00:00',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.passengers', 'text' => ['body' => 'somos 5 personas']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame(5, $flight->refresh()->passengers);
+        $this->assertSame('ASK_TRIP_TYPE', $conversation->refresh()->state);
+    }
+
+    public function test_natural_time_answer_is_accepted(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.time']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_DEPARTURE_TIME']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Querétaro',
+            'destination' => 'Cancún',
+            'departure_date' => '2026-10-02',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.time', 'text' => ['body' => '2 pm']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('14:00:00', $flight->departure_time);
+        $this->assertSame('ASK_TIME_FLEXIBILITY', $conversation->refresh()->state);
+    }
+
+    public function test_multicity_legs_are_captured_one_question_at_a_time(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()
+            ->push(['messages' => [['id' => 'out.leg-destination']]])
+            ->push(['messages' => [['id' => 'out.leg-date']]])
+            ->push(['messages' => [['id' => 'out.leg-time']]])
+            ->push(['messages' => [['id' => 'out.leg-next']]])
+            ->push(['messages' => [['id' => 'out.luggage']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_LEGS']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Cancún',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '09:00:00',
+            'trip_type' => 'MULTI_CITY',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.leg-yes', 'text' => ['body' => 'sí']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.leg-destination', 'text' => ['body' => 'Mérida']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.leg-date', 'text' => ['body' => '2026-10-03']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.leg-time', 'text' => ['body' => '2 pm']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.leg-done', 'text' => ['body' => 'continuemos']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame([[
+            'origin' => 'Cancún',
+            'destination' => 'Mérida',
+            'departure_date' => '2026-10-03',
+            'departure_time' => '14:00:00',
+        ]], $flight->refresh()->legs);
+        $this->assertSame('ASK_LUGGAGE', $conversation->refresh()->state);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.leg-destination', 'body' => 'Claro. ¿Cuál sería el siguiente destino?']);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.leg-date', 'body' => 'Perfecto, hacia Mérida. ¿Para qué día sería ese tramo?']);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.leg-time', 'body' => '¿A qué hora aproximadamente?']);
+    }
+
+    public function test_human_transfer_phrases_stop_the_bot(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.human']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_DESTINATION']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['origin' => 'Toluca']);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.human', 'text' => ['body' => 'quiero hablar con alguien']]]])->assertOk();
+
+        $this->assertSame('TRANSFER_TO_HUMAN', $conversation->refresh()->state);
+        $this->assertNull($conversation->flightRequest->destination);
+        Http::assertSentCount(1);
+    }
+
+    public function test_new_quote_intent_clears_only_current_request_and_asks_origin(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.new-quote']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'FINISHED', 'metadata' => ['foo' => 'bar']]);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Cancún',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '09:00:00',
+            'passengers' => 4,
+            'status' => 'quoted',
+            'quote_reference' => 'QUOTE-1',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.new-quote', 'text' => ['body' => 'quiero cotizar otro vuelo']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_ORIGIN', $conversation->refresh()->state);
+        $this->assertNull($conversation->metadata);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertNull($flight->destination);
+        $this->assertSame('collecting', $flight->status);
+        $this->assertDatabaseCount('whats_app_flight_requests', 1);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.new-quote', 'body' => 'Claro, iniciemos una nueva cotización. ¿Desde qué ciudad o aeropuerto deseas salir?']);
+    }
+
+    public function test_quote_status_reports_real_state_without_resetting_request(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.status']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'FINISHED']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Cancún',
+            'status' => 'quoted',
+            'quote_reference' => 'QUOTE-99',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.status', 'text' => ['body' => 'cómo va mi cotización']]]])->assertOk();
+
+        $this->assertSame('FINISHED', $conversation->refresh()->state);
+        $this->assertSame('Toluca', $conversation->flightRequest->origin);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.status', 'body' => 'Tu cotización ya fue registrada con referencia QUOTE-99.']);
+    }
+
+    public function test_quote_intent_continues_from_missing_data_instead_of_restart(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.continue']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'START']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Cancún',
+            'passengers' => 6,
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.continue', 'text' => ['body' => 'quiero cotizar']]]])->assertOk();
+
+        $this->assertSame('ASK_DEPARTURE_DATE', $conversation->refresh()->state);
+        $this->assertSame(6, $conversation->flightRequest->passengers);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.continue', 'body' => 'Perfecto, Toluca → Cancún. ¿Para qué día tienes pensado viajar?']);
+    }
+
+    public function test_natural_corrections_update_data_without_restart(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()
+            ->push(['messages' => [['id' => 'out.passenger-correction']]])
+            ->push(['messages' => [['id' => 'out.destination-correction']]])
+            ->push(['messages' => [['id' => 'out.pet-correction']]])
+            ->push(['messages' => [['id' => 'out.date-correction']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_TRIP_TYPE']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Mérida',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '09:00:00',
+            'passengers' => 4,
+            'has_pets' => true,
+            'pets_description' => 'perro pequeño',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.passenger-correction', 'text' => ['body' => 'somos 6']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.destination-correction', 'text' => ['body' => 'mejor Cancún']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.pet-correction', 'text' => ['body' => 'sin mascotas']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.date-correction', 'text' => ['body' => 'cámbialo para mañana']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole()->refresh();
+        $this->assertSame(6, $flight->passengers);
+        $this->assertSame('Cancún', $flight->destination);
+        $this->assertFalse($flight->has_pets);
+        $this->assertNull($flight->pets_description);
+        $this->assertSame('2026-09-22', $flight->departure_date->toDateString());
+        $this->assertNotSame('ASK_ORIGIN', $conversation->refresh()->state);
+    }
+
+    public function test_location_answers_are_cleaned_without_static_city_mapping(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()
+            ->push(['messages' => [['id' => 'out.location-origin']]])
+            ->push(['messages' => [['id' => 'out.location-destination']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_ORIGIN']);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.location-origin', 'text' => ['body' => 'Aeropuerto de Toluca']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.location-destination', 'text' => ['body' => 'tlc']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('Toluca', $flight->origin);
+        $this->assertSame('TLC', $flight->refresh()->destination);
     }
 
     /** @param array<string, mixed>|null $value */
