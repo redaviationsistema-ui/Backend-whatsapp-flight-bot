@@ -73,11 +73,21 @@ class WhatsAppChatbotService
         if ($this->isHelpRequest($normalized)) {
             return $this->help($conversation, $flightRequest);
         }
+        if ($this->isUnsupportedIntent($normalized)) {
+            return [
+                'state' => $conversation->state === 'START' ? 'START' : $conversation->state,
+                'message' => 'Gracias por escribirnos. Este canal está enfocado exclusivamente en renta y cotización de vuelos privados. Si deseas cotizar un vuelo, con gusto te ayudo.',
+            ];
+        }
         if ($directCorrection = $this->directCorrection($conversation, $flightRequest, $message, $normalized)) {
             return $directCorrection;
         }
         if ($correction = $this->correction($conversation, $flightRequest, $normalized)) {
             return $correction;
+        }
+        $details = $this->extractFlightDetails($message);
+        if (isset($details['origin'], $details['destination'])) {
+            return $this->applyExtractedDetails($conversation, $flightRequest, $details);
         }
         if ($this->startsQuoteIntent($normalized)) {
             return $this->continueFromMissing($conversation, $flightRequest);
@@ -137,9 +147,43 @@ class WhatsAppChatbotService
     {
         return str_contains($message, 'cotizar')
             || str_contains($message, 'disponibilidad')
-            || str_contains($message, 'precio')
-            || str_contains($message, 'cuanto cuesta')
+            || str_contains($message, 'rentar')
+            || str_contains($message, 'renta')
+            || str_contains($message, 'vuelo privado')
+            || str_contains($message, 'jet')
+            || str_contains($message, 'cuanto cuesta un vuelo')
+            || str_contains($message, 'necesito un avion')
             || str_contains($message, 'informacion');
+    }
+
+    private function isUnsupportedIntent(string $message): bool
+    {
+        if ($this->looksLikeFlightRentalMessage($message)) {
+            return false;
+        }
+
+        return str_contains($message, 'comprar')
+            || str_contains($message, 'comprarlo')
+            || str_contains($message, 'venta')
+            || str_contains($message, 'vender')
+            || str_contains($message, 'publicacion')
+            || str_contains($message, 'cessna')
+            || str_contains($message, 'cuanto cuesta el avion')
+            || str_contains($message, 'refaccion')
+            || str_contains($message, 'refacciones')
+            || str_contains($message, 'pieza')
+            || str_contains($message, 'piezas');
+    }
+
+    private function looksLikeFlightRentalMessage(string $message): bool
+    {
+        return str_contains($message, 'cotizar')
+            || str_contains($message, 'vuelo')
+            || str_contains($message, 'salida')
+            || str_contains($message, 'pasajer')
+            || str_contains($message, 'rentar')
+            || str_contains($message, 'renta')
+            || preg_match('/\b(?:de|desde)\s+[\pL .]{2,60}\s+(?:a|hacia)\s+[\pL .]{2,60}/iu', $message) === 1;
     }
 
     private function isGreeting(string $message): bool
@@ -390,6 +434,9 @@ class WhatsAppChatbotService
         }
         $message = $question['type'] === 'location' ? $this->normalizeLocationValue($message) : $message;
         $normalized = $question['type'] === 'location' ? $this->normalize($message) : $normalized;
+        if ($question['type'] === 'location' && ! $this->isPlausibleLocation($message)) {
+            return $this->question($state, $this->invalidMessage('location', $question['label']), $flightRequest);
+        }
         $parsedDate = $question['type'] === 'date' ? $this->parseDate($message) : null;
         $value = match ($question['type']) {
             'date' => $parsedDate?->toDateString(),
@@ -447,6 +494,86 @@ class WhatsAppChatbotService
         return $this->advance($conversation, $flightRequest, $next);
     }
 
+    /**
+     * @param  array{origin?:string,destination?:string,departure_date?:string,passengers?:int,trip_type?:string}  $details
+     * @return array{state:string,message:string}
+     */
+    private function applyExtractedDetails(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, array $details): array
+    {
+        if ($details === []) {
+            return $this->continueFromMissing($conversation, $flightRequest);
+        }
+
+        $flightRequest->update($details);
+        $flightRequest->refresh();
+        $next = $this->nextMissingState($flightRequest);
+
+        if (! $next) {
+            return $this->showSummary($flightRequest);
+        }
+
+        return [
+            'state' => $next,
+            'message' => $this->extractedSummary($flightRequest)."\n".$this->prompt($next, $flightRequest),
+        ];
+    }
+
+    /**
+     * @return array{origin?:string,destination?:string,departure_date?:string,passengers?:int,trip_type?:string}
+     */
+    private function extractFlightDetails(string $message): array
+    {
+        $normalized = $this->normalize($message);
+        $details = [];
+
+        if (preg_match('/(?:salida es de|salgo de|salimos de|desde|de)\s+([\pL .]{2,60}?)\s+(?:a|hacia)\s+([\pL .]{2,60}?)(?=\s+(?:el|para|con|somos|únicamente|unicamente|solo|sólo|\d|$))/iu', $message, $match)) {
+            $origin = $this->normalizeLocationValue($match[1]);
+            $destination = $this->normalizeLocationValue($match[2]);
+            if ($this->isPlausibleLocation($origin) && $this->isPlausibleLocation($destination) && $this->normalize($origin) !== $this->normalize($destination)) {
+                $details['origin'] = $origin;
+                $details['destination'] = $destination;
+            }
+        }
+
+        if (preg_match('/\b(\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)(?:\s+de\s+\d{4})?|\d{4}-\d{2}-\d{2}|hoy|mañana|manana|pasado mañana|pasado manana)\b/iu', $message, $match)) {
+            $date = $this->parseDate($match[1]);
+            if ($date && ! $date->lt(Carbon::today(config('whatsapp.timezone')))) {
+                $details['departure_date'] = $date->toDateString();
+            }
+        }
+
+        if (preg_match('/\b(?:somos|para|con)?\s*(\d{1,2})\s*(?:pasajeros|personas|pax)\b/', $normalized, $match)) {
+            $passengers = (int) $match[1];
+            if ($passengers >= 1 && $passengers <= 99) {
+                $details['passengers'] = $passengers;
+            }
+        }
+
+        if (preg_match('/\b(?:solo|sólo|unicamente|únicamente)\s+ida\b/u', $normalized)) {
+            $details['trip_type'] = 'ONE_WAY';
+        } elseif (str_contains($normalized, 'ida y vuelta') || str_contains($normalized, 'ida y regreso')) {
+            $details['trip_type'] = 'ROUND_TRIP';
+        } elseif (str_contains($normalized, 'multidestino') || str_contains($normalized, 'multi destino')) {
+            $details['trip_type'] = 'MULTI_CITY';
+        }
+
+        return $details;
+    }
+
+    private function extractedSummary(WhatsAppFlightRequest $flightRequest): string
+    {
+        $parts = array_filter([
+            $flightRequest->origin && $flightRequest->destination ? "{$flightRequest->origin} → {$flightRequest->destination}" : null,
+            $flightRequest->trip_type === 'ONE_WAY' ? 'solo ida' : null,
+            $flightRequest->passengers ? "para {$flightRequest->passengers} pasajeros" : null,
+            $flightRequest->departure_date ? 'el '.$this->displayDate($flightRequest->departure_date) : null,
+        ]);
+
+        return $parts === []
+            ? 'Perfecto, sigamos con tu cotización.'
+            : 'Perfecto, tengo '.implode(', ', $parts).'.';
+    }
+
     /** @return array{state:string,message:string} */
     private function advance(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $next): array
     {
@@ -477,6 +604,27 @@ class WhatsAppChatbotService
         $value = trim($value, " \t\n\r\0\x0B.,");
 
         return preg_match('/^[a-z]{3,4}$/i', $value) ? mb_strtoupper($value) : $value;
+    }
+
+    private function isPlausibleLocation(string $message): bool
+    {
+        $value = trim($message);
+        $normalized = $this->normalize($value);
+
+        if ($value === '' || mb_strlen($value) > 80) {
+            return false;
+        }
+        if (preg_match('/^[A-Z]{3,4}$/', $value) === 1) {
+            return true;
+        }
+        if (preg_match('/\d|[@|]/', $value) === 1) {
+            return false;
+        }
+        if (preg_match('/\b(?:interesado|comprar|comprarlo|venta|publicacion|refaccion|refacciones|pieza|piezas|precio|cuesta|avion)\b/', $normalized) === 1) {
+            return false;
+        }
+
+        return preg_match('/^[\pL][\pL .\'-]{1,79}$/u', $value) === 1;
     }
 
     /** @return array{state:string,message:string} */
@@ -702,11 +850,23 @@ class WhatsAppChatbotService
     {
         $lines = ['Perfecto, esto es lo que tengo hasta ahora:', ''];
         $lines[] = '✈️ '.$this->routeLine($flightRequest);
+        if ($flightRequest->trip_type) {
+            $lines[] = '➡️ '.$this->tripTypeLabel($flightRequest->trip_type);
+        }
         if ($flightRequest->departure_date || $flightRequest->departure_time) {
-            $lines[] = '📅 '.trim(implode(' a las ', array_filter([
-                $this->displayDate($flightRequest->departure_date),
-                $this->displayTime($flightRequest->departure_time),
-            ])));
+            $lines[] = '📅 '.$this->dateTimeLine($flightRequest->departure_date, $flightRequest->departure_time);
+        }
+        if ($flightRequest->trip_type === 'ROUND_TRIP' && ($flightRequest->return_date || $flightRequest->return_time)) {
+            $lines[] = '🔁 Regreso: '.$this->dateTimeLine($flightRequest->return_date, $flightRequest->return_time);
+        }
+        foreach ($flightRequest->legs ?? [] as $index => $leg) {
+            $lines[] = sprintf(
+                '🛫 Tramo %d: %s → %s%s',
+                $index + 2,
+                $leg['origin'] ?? '',
+                $leg['destination'] ?? '',
+                isset($leg['departure_date'], $leg['departure_time']) ? ', '.$this->dateTimeLine($leg['departure_date'], $leg['departure_time']) : '',
+            );
         }
         if ($flightRequest->passengers) {
             $lines[] = '👥 '.$flightRequest->passengers.' pasajeros';
@@ -714,11 +874,32 @@ class WhatsAppChatbotService
         if ($flightRequest->luggage_count !== null) {
             $lines[] = '🧳 '.$flightRequest->luggage_count.' piezas de equipaje';
         }
+        if ($flightRequest->luggage_description) {
+            $lines[] = '🧳 '.Str::limit($flightRequest->luggage_description, 100);
+        }
+        if ($flightRequest->special_luggage) {
+            $lines[] = '🎒 Equipaje especial: '.Str::limit($flightRequest->special_luggage, 100);
+        }
         if ($flightRequest->has_pets !== null) {
             $lines[] = '🐾 '.($flightRequest->has_pets ? Str::limit((string) ($flightRequest->pets_description ?: 'Viajan mascotas'), 80) : 'Sin mascotas');
         }
+        if ($flightRequest->aircraft_preference) {
+            $lines[] = '🛩️ Preferencia de aeronave: '.Str::limit($flightRequest->aircraft_preference, 100);
+        }
         if ($flightRequest->is_time_flexible !== null) {
             $lines[] = '🕐 '.($flightRequest->is_time_flexible ? 'Horario flexible' : 'Horario fijo');
+        }
+        if ($flightRequest->catering_required !== null) {
+            $lines[] = '🍽️ Catering: '.$this->yesNo($flightRequest->catering_required);
+        }
+        if ($flightRequest->ground_transport_required !== null) {
+            $lines[] = '🚘 Transporte terrestre: '.$this->yesNo($flightRequest->ground_transport_required);
+        }
+        if ($flightRequest->wifi_required !== null) {
+            $lines[] = '📶 Wi-Fi: '.$this->yesNo($flightRequest->wifi_required);
+        }
+        if ($flightRequest->other_services) {
+            $lines[] = '➕ Otros servicios: '.Str::limit($flightRequest->other_services, 120);
         }
         if ($flightRequest->client_name) {
             $lines[] = '';
@@ -727,11 +908,39 @@ class WhatsAppChatbotService
         if ($flightRequest->client_email) {
             $lines[] = $flightRequest->client_email;
         }
+        if ($flightRequest->company) {
+            $lines[] = '🏢 Cotización para '.$flightRequest->company;
+        }
+        if ($flightRequest->budget !== null && $flightRequest->budget !== '') {
+            $lines[] = '💰 Presupuesto aproximado: '.number_format((float) $flightRequest->budget, 0).' USD';
+        }
         if ($flightRequest->notes) {
             $lines[] = 'Notas: '.Str::limit($flightRequest->notes, 120);
         }
 
         return implode("\n", $lines);
+    }
+
+    private function tripTypeLabel(string $tripType): string
+    {
+        return match ($tripType) {
+            'ROUND_TRIP' => 'Ida y vuelta',
+            'MULTI_CITY' => 'Multidestino',
+            default => 'Solo ida',
+        };
+    }
+
+    private function dateTimeLine(mixed $date, ?string $time): string
+    {
+        return trim(implode(' a las ', array_filter([
+            $this->displayDate($date),
+            $this->displayTime($time),
+        ])));
+    }
+
+    private function yesNo(bool $value): string
+    {
+        return $value ? 'Sí' : 'No';
     }
 
     private function displayDate(mixed $date): ?string
@@ -740,8 +949,9 @@ class WhatsAppChatbotService
             return null;
         }
         $date = $date instanceof Carbon ? $date : Carbon::parse($date, config('whatsapp.timezone'));
+        $months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
-        return $date->translatedFormat('j \d\e F');
+        return $date->day.' de '.$months[$date->month - 1];
     }
 
     private function displayTime(?string $time): ?string
@@ -791,7 +1001,7 @@ class WhatsAppChatbotService
         if ($allowZero && $this->isNegative($message)) {
             return 0;
         }
-        if (preg_match('/\b(\d{1,2})\b/', $message, $match)) {
+        if (preg_match('/(?<![-.\d])(\d{1,2})(?![.\d])/', $message, $match)) {
             $count = (int) $match[1];
 
             return $count >= ($allowZero ? 0 : 1) && $count <= 99 ? $count : false;
@@ -836,6 +1046,7 @@ class WhatsAppChatbotService
         return match ($type) {
             'date' => 'No entendí la fecha.',
             'time' => 'No entendí la hora.',
+            'location' => 'No alcancé a identificar una ciudad o aeropuerto. ¿Me lo compartes nuevamente?',
             'passengers' => 'Necesito cuántas personas viajan.',
             'count' => 'Necesito un número para '.$this->normalize($label).'.',
             'boolean', 'pets' => 'Necesito una respuesta de sí o no.',
