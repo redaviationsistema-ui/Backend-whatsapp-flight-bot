@@ -7,6 +7,7 @@ use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppFlightRequest;
 use App\Models\WhatsAppMessage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
@@ -239,12 +240,13 @@ class WhatsAppIdempotencyTest extends TestCase
             }
         });
 
-        $this->webhook()->assertOk();
-        $this->webhook()->assertOk();
+        $search = ['messages' => [[...$this->incomingMessage(), 'text' => ['body' => 'continuar']]]];
+        $this->webhook($search)->assertOk();
+        $this->webhook($search)->assertOk();
         $this->assertSame('SHOW_RESULTS', $conversation->refresh()->state);
         Http::assertSentCount(2);
 
-        $next = ['messages' => [[...$this->incomingMessage(), 'id' => 'in.options']]];
+        $next = ['messages' => [[...$this->incomingMessage(), 'id' => 'in.options', 'text' => ['body' => 'continuar']]]];
         $this->webhook($next)->assertInternalServerError();
         $this->webhook($next)->assertOk();
         $this->webhook($next)->assertOk();
@@ -320,6 +322,95 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNotNull($inbound->refresh()->processed_at);
         $this->assertDatabaseCount('whats_app_messages', 2);
         Http::assertSentCount(2);
+    }
+
+    public function test_hola_restart_clears_current_request_and_does_not_process_older_pending_inbounds(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.hola']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'START']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Cancún',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '14:00:00',
+            'passengers' => 4,
+            'trip_type' => 'ONE_WAY',
+            'status' => 'confirmed',
+            'confirmed_at' => now(),
+        ]);
+        $staleInbound = WhatsAppMessage::factory()->for($conversation, 'conversation')->create([
+            'message_id' => 'in.stale',
+            'direction' => 'inbound',
+            'body' => 'Cancún',
+            'processed_at' => null,
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.hola', 'text' => ['body' => 'Hola']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_ORIGIN', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertNull($flight->destination);
+        $this->assertNull($flight->departure_date);
+        $this->assertNull($staleInbound->refresh()->processed_at);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.hola',
+            'direction' => 'outbound',
+            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?",
+        ]);
+        $this->assertDatabaseMissing('whats_app_messages', ['body' => '¿Cuál es el destino?']);
+        Http::assertSentCount(1);
+    }
+
+    public function test_past_departure_date_gets_specific_message_without_leaving_date_state(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.past-date']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_DEPARTURE_DATE']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Querétaro',
+            'destination' => 'Cancún',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.past-date', 'text' => ['body' => '2026-04-23']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_DEPARTURE_DATE', $conversation->refresh()->state);
+        $this->assertNull($flight->refresh()->departure_date);
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.past-date',
+            'body' => "La fecha de salida debe ser futura.\nIndica la fecha de salida (AAAA-MM-DD o una fecha relativa).",
+        ]);
+    }
+
+    public function test_future_departure_date_is_accepted_and_advances_once(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.future-date']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_DEPARTURE_DATE']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create([
+            'origin' => 'Querétaro',
+            'destination' => 'Cancún',
+        ]);
+
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.future-date', 'text' => ['body' => '2026-10-02']]]])->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('ASK_DEPARTURE_TIME', $conversation->refresh()->state);
+        $this->assertSame('2026-10-02', $flight->refresh()->departure_date->toDateString());
+        $this->assertDatabaseHas('whats_app_messages', [
+            'message_id' => 'out.future-date',
+            'body' => '¿A qué hora deseas salir? Usa el formato HH:MM.',
+        ]);
     }
 
     /** @param array<string, mixed>|null $value */

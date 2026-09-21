@@ -50,6 +50,52 @@ class WhatsAppConversationService
         ]);
     }
 
+    public function resetFlightRequest(WhatsAppConversation $conversation): WhatsAppFlightRequest
+    {
+        $flightRequest = $this->findOrCreateFlightRequest($conversation);
+        $flightRequest->update([
+            'origin' => null,
+            'destination' => null,
+            'departure_date' => null,
+            'departure_time' => null,
+            'passengers' => null,
+            'trip_type' => null,
+            'return_date' => null,
+            'return_time' => null,
+            'search_results' => null,
+            'selected_aircraft' => null,
+            'selected_aircraft_id' => null,
+            'selected_provider_id' => null,
+            'selected_match_id' => null,
+            'quote_reference' => null,
+            'backend_flight_request_id' => null,
+            'accepted_quote_id' => null,
+            'official_quote_payload' => null,
+            'status' => 'collecting',
+            'is_time_flexible' => null,
+            'luggage_count' => null,
+            'luggage_description' => null,
+            'special_luggage' => null,
+            'has_pets' => null,
+            'pets_description' => null,
+            'aircraft_preference' => null,
+            'allow_alternate_airports' => null,
+            'catering_required' => null,
+            'ground_transport_required' => null,
+            'wifi_required' => null,
+            'other_services' => null,
+            'client_name' => null,
+            'client_email' => null,
+            'company' => null,
+            'budget' => null,
+            'notes' => null,
+            'legs' => null,
+            'confirmed_at' => null,
+        ]);
+
+        return $flightRequest->refresh();
+    }
+
     public function moveToState(WhatsAppConversation $conversation, string $state): void
     {
         $conversation->update([

@@ -40,7 +40,10 @@ class WhatsAppChatbotService
         'ASK_NOTES' => ['field' => 'notes', 'label' => 'Observaciones', 'prompt' => '¿Tienes observaciones adicionales? Puedes escribir ninguna.', 'type' => 'text'],
     ];
 
-    public function __construct(private readonly FlightApiService $flightApiService) {}
+    public function __construct(
+        private readonly FlightApiService $flightApiService,
+        private readonly WhatsAppConversationService $conversationService,
+    ) {}
 
     /** @return array{state:string,message:string} */
     public function handleIncomingMessage(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message): array
@@ -51,6 +54,12 @@ class WhatsAppChatbotService
         }
         if ($conversation->state === 'TRANSFER_TO_HUMAN') {
             return ['state' => 'TRANSFER_TO_HUMAN', 'message' => ''];
+        }
+        if ($this->isGreeting($normalized)) {
+            $this->conversationService->resetFlightRequest($conversation);
+            $conversation->update(['metadata' => null]);
+
+            return ['state' => 'ASK_ORIGIN', 'message' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?"];
         }
         if (! $flightRequest->confirmed_at && in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'SELECT_AIRCRAFT', 'CREATE_QUOTE'], true)) {
             return $this->showSummary($flightRequest);
@@ -71,6 +80,11 @@ class WhatsAppChatbotService
             'CANCELLED' => ['state' => 'CANCELLED', 'message' => 'Esta solicitud fue cancelada.'],
             default => $this->question('ASK_ORIGIN'),
         };
+    }
+
+    private function isGreeting(string $message): bool
+    {
+        return in_array($message, ['hola', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches'], true);
     }
 
     private function normalize(string $message): string
@@ -97,8 +111,9 @@ class WhatsAppChatbotService
         if ($question['type'] === 'legs') {
             return $this->captureLeg($conversation, $flightRequest, $message);
         }
+        $parsedDate = $question['type'] === 'date' ? $this->parseDate($message) : null;
         $value = match ($question['type']) {
-            'date' => $this->parseDate($message)?->toDateString(),
+            'date' => $parsedDate?->toDateString(),
             'time' => $this->parseTime($message),
             'passengers', 'count' => filter_var($message, FILTER_VALIDATE_INT, ['options' => ['min_range' => $question['type'] === 'count' ? 0 : 1, 'max_range' => 99]]),
             'boolean', 'pets' => $this->parseBoolean($normalized, $question['type'] === 'pets'),
@@ -113,6 +128,9 @@ class WhatsAppChatbotService
         };
         if ($value === null || (in_array($question['type'], ['passengers', 'count'], true) && $value === false)) {
             return $this->question($state, 'No pude reconocer ese dato.');
+        }
+        if ($question['type'] === 'date' && $parsedDate?->lt(Carbon::today(config('whatsapp.timezone')))) {
+            return $this->question($state, $field === 'departure_date' ? 'La fecha de salida debe ser futura.' : 'La fecha debe ser futura.');
         }
         if ($question['type'] === 'location') {
             $other = $field === 'origin' ? $flightRequest->destination : $flightRequest->origin;
@@ -365,7 +383,7 @@ class WhatsAppChatbotService
         }
         $date = Carbon::createFromFormat('!Y-m-d', $message, config('whatsapp.timezone'));
 
-        return $date && $date->gte($today) ? $date : null;
+        return $date ?: null;
     }
 
     private function parseTime(string $message): ?string

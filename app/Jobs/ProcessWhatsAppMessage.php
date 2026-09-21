@@ -61,10 +61,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                         return $messageService->storeInboundMessage($conversation, $messageId, $message['type'] ?? 'unknown', $this->extractText($message), $message, isset($message['timestamp']) ? (int) $message['timestamp'] : null);
                     });
                 }
-                $pending = $inbound->conversation->messages()->where('direction', 'inbound')->whereNull('processed_at')->where('id', '<=', $inbound->id)->orderBy('id')->get();
-                foreach ($pending as $pendingMessage) {
-                    $this->processInbound($pendingMessage, $conversationService, $messageService, $chatbotService, $whatsAppService);
-                }
+                $this->processInbound($inbound, $conversationService, $messageService, $chatbotService, $whatsAppService);
             });
         }
     }
