@@ -96,7 +96,7 @@ class WhatsAppService
     {
         $phoneNumberId = config('services.whatsapp.phone_number_id') ?? config('whatsapp.phone_number_id');
         $accessToken = config('services.whatsapp.access_token') ?? config('whatsapp.access_token');
-        $apiVersion = config('services.whatsapp.api_version') ?? config('whatsapp.api_version', 'v20.0');
+        $apiVersion = config('services.whatsapp.api_version') ?? config('whatsapp.api_version', 'v26.0');
 
         if (! $phoneNumberId || ! $accessToken) {
             Log::warning('WhatsApp message not sent because credentials are missing.', [
@@ -105,7 +105,7 @@ class WhatsAppService
                 'has_access_token' => (bool) $accessToken,
             ]);
 
-            return [];
+            throw new RuntimeException('WhatsApp credentials are not configured.');
         }
 
         try {
@@ -124,7 +124,6 @@ class WhatsAppService
                 ->acceptJson()
                 ->connectTimeout(5)
                 ->timeout(15)
-                ->retry(2, 500)
                 ->post($url, $payload);
 
             Log::info('Meta WhatsApp API response received.', [
@@ -132,7 +131,7 @@ class WhatsAppService
                 'response' => $response->json(),
             ]);
 
-            if ($response->failed()) {
+            if (! $response->successful() || $response->json('error') !== null || ! is_string($response->json('messages.0.id')) || $response->json('messages.0.id') === '') {
                 Log::error('WhatsApp Meta API error.', [
                     'status' => $response->status(),
                     'response' => $response->json(),

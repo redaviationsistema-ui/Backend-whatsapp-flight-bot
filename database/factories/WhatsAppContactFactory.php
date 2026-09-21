@@ -18,7 +18,8 @@ class WhatsAppContactFactory extends Factory
     public function definition(): array
     {
         return [
-            //
+            'phone_number' => fake()->unique()->numerify('52155########'),
+            'name' => fake()->name(),
         ];
     }
 }

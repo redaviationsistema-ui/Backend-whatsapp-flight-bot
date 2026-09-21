@@ -11,6 +11,7 @@ use App\Services\WhatsApp\WhatsAppConversationService;
 use App\Services\WhatsApp\WhatsAppMessageService;
 use App\Services\WhatsApp\WhatsAppService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -32,8 +33,9 @@ class WhatsAppWebhookTest extends TestCase
     public function test_it_dispatches_incoming_whatsapp_messages(): void
     {
         Queue::fake();
+        config(['services.whatsapp.app_secret' => 'test-meta-secret']);
 
-        $this->postJson('/api/webhooks/whatsapp', $this->payload('wamid.1', 'Hola'))
+        $this->postJson('/api/webhooks/whatsapp', $this->payload('wamid.1', 'Hola'), ['X-Hub-Signature-256' => 'sha256='.hash_hmac('sha256', json_encode($this->payload('wamid.1', 'Hola')), 'test-meta-secret')])
             ->assertOk()
             ->assertJson(['received' => true]);
 
@@ -51,11 +53,17 @@ class WhatsAppWebhookTest extends TestCase
             'flight_api.retry_times' => 0,
             'whatsapp.phone_number_id' => null,
             'whatsapp.access_token' => null,
-            'services.whatsapp.phone_number_id' => null,
-            'services.whatsapp.access_token' => null,
+            'services.whatsapp.phone_number_id' => '123',
+            'services.whatsapp.access_token' => 'test-access-token',
         ]);
 
+        $this->travelTo(Carbon::parse('2026-09-20'));
+        Http::preventStrayRequests();
+        $sequence = 0;
         Http::fake([
+            'https://graph.facebook.com/*/123/messages' => function () use (&$sequence) {
+                return Http::response(['messages' => [['id' => 'out.'.++$sequence]]]);
+            },
             'https://backend.test/api/v1/client/quotes/preview' => Http::sequence()
                 ->push($this->previewResponse())
                 ->push($this->previewResponse()),
@@ -70,15 +78,11 @@ class WhatsAppWebhookTest extends TestCase
             ]),
         ]);
 
-        $this->process('wamid.1', 'Hola');
-        $this->process('wamid.2', 'Toluca');
-        $this->process('wamid.3', 'Cancun');
-        $this->process('wamid.4', '2026-10-15');
-        $this->process('wamid.5', '14:30');
-        $this->process('wamid.6', '5');
-        $this->process('wamid.7', 'ONE_WAY');
-        $this->process('wamid.8', '1');
-        $this->process('wamid.8', '1');
+        $answers = ['Hola', 'Toluca', 'Cancun', '2026-10-15', '14:30', 'sí', '5', '1', '4', '4 maletas', 'ninguno', 'no', 'sin preferencia', 'sí', 'sí', 'no', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', '1'];
+        foreach ($answers as $index => $answer) {
+            $this->process('wamid.'.($index + 1), $answer);
+        }
+        $this->process('wamid.25', '1');
 
         $conversation = WhatsAppConversation::query()->firstOrFail();
         $flightRequest = WhatsAppFlightRequest::query()->firstOrFail();
@@ -96,7 +100,7 @@ class WhatsAppWebhookTest extends TestCase
         $this->assertSame(4001, $flightRequest->accepted_quote_id);
         $this->assertSame('QUOTE-4001', $flightRequest->quote_reference);
         $this->assertSame('quoted', $flightRequest->status);
-        $this->assertCount(1, WhatsAppMessage::query()->where('message_id', 'wamid.8')->get());
+        $this->assertCount(1, WhatsAppMessage::query()->where('message_id', 'wamid.25')->get());
 
         Http::assertSent(fn ($request): bool => $request->url() === 'https://backend.test/api/v1/client/quotes/preview'
             && $request->hasHeader('Authorization', 'Bearer plain-api-token')
@@ -119,10 +123,12 @@ class WhatsAppWebhookTest extends TestCase
         config([
             'whatsapp.phone_number_id' => null,
             'whatsapp.access_token' => null,
-            'services.whatsapp.phone_number_id' => null,
-            'services.whatsapp.access_token' => null,
+            'services.whatsapp.phone_number_id' => '123',
+            'services.whatsapp.access_token' => 'test-access-token',
         ]);
 
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.hola']]])]);
         $this->process('wamid.hola', 'hola');
 
         $conversation = WhatsAppConversation::query()->firstOrFail();
@@ -134,7 +140,7 @@ class WhatsAppWebhookTest extends TestCase
             'body' => 'hola',
         ]);
         $this->assertDatabaseHas('whats_app_messages', [
-            'message_id' => null,
+            'message_id' => 'out.hola',
             'direction' => 'outbound',
             'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?",
         ]);

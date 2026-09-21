@@ -43,6 +43,11 @@ class WhatsAppConversation extends Model
         return $this->hasMany(WhatsAppMessage::class);
     }
 
+    public function latestMessage(): HasOne
+    {
+        return $this->hasOne(WhatsAppMessage::class)->ofMany(['sent_at' => 'max', 'id' => 'max']);
+    }
+
     public function flightRequest(): HasOne
     {
         return $this->hasOne(WhatsAppFlightRequest::class);

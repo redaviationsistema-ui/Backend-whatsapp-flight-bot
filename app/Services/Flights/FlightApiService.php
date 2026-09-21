@@ -113,12 +113,28 @@ class FlightApiService
             ];
         }
 
+        if ($flightRequest->trip_type === 'MULTI_CITY') {
+            foreach ($flightRequest->legs ?? [] as $index => $leg) {
+                $legs[] = [
+                    'leg_order' => $index + 2,
+                    'origin' => $leg['origin'],
+                    'destination' => $leg['destination'],
+                    'departure_datetime' => $this->combineDateTime($leg['departure_date'], $leg['departure_time']),
+                    'passengers' => $flightRequest->passengers,
+                ];
+            }
+        }
+
         return array_values(array_filter($legs, fn (array $leg): bool => filled($leg['departure_datetime'] ?? null)));
     }
 
     private function officialTripType(WhatsAppFlightRequest $flightRequest): string
     {
-        return $flightRequest->trip_type === 'ROUND_TRIP' ? 'round_trip' : 'one_way';
+        return match ($flightRequest->trip_type) {
+            'ROUND_TRIP' => 'round_trip',
+            'MULTI_CITY' => 'multi_city',
+            default => 'one_way',
+        };
     }
 
     private function combineDateTime(?string $date, ?string $time): ?string

@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -18,7 +19,12 @@ class WhatsAppMessageFactory extends Factory
     public function definition(): array
     {
         return [
-            //
+            'whats_app_conversation_id' => WhatsAppConversation::factory(),
+            'message_id' => 'wamid.'.fake()->unique()->uuid(),
+            'direction' => 'inbound',
+            'type' => 'text',
+            'body' => 'Hola',
+            'sent_at' => now(),
         ];
     }
 }

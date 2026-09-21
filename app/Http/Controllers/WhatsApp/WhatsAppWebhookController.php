@@ -62,7 +62,7 @@ class WhatsAppWebhookController extends Controller
             'configured_phone_number_id' => config('services.whatsapp.phone_number_id'),
         ]);
 
-        if (($payload['object'] ?? null) !== 'whatsapp_business_account' || $messageCount === 0) {
+        if (($payload['object'] ?? null) !== 'whatsapp_business_account') {
             return response()->json(['received' => true]);
         }
 
@@ -105,7 +105,7 @@ class WhatsAppWebhookController extends Controller
         $appSecret = config('services.whatsapp.app_secret');
 
         if (! $appSecret) {
-            return true;
+            return false;
         }
 
         $signature = (string) $request->header('X-Hub-Signature-256');

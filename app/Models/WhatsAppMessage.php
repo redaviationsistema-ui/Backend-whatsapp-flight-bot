@@ -20,6 +20,15 @@ class WhatsAppMessage extends Model
         'body',
         'payload',
         'sent_at',
+        'status',
+        'delivered_at',
+        'read_at',
+        'failed_at',
+        'error_code',
+        'error_message',
+        'processed_at',
+        'processing_context',
+
     ];
 
     protected function casts(): array
@@ -27,6 +36,11 @@ class WhatsAppMessage extends Model
         return [
             'payload' => 'array',
             'sent_at' => 'datetime',
+            'delivered_at' => 'datetime',
+            'read_at' => 'datetime',
+            'failed_at' => 'datetime',
+            'processed_at' => 'datetime',
+            'processing_context' => 'array',
         ];
     }
 

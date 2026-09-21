@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\WhatsAppContact;
 use App\Models\WhatsAppConversation;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -18,7 +19,10 @@ class WhatsAppConversationFactory extends Factory
     public function definition(): array
     {
         return [
-            //
+            'whats_app_contact_id' => WhatsAppContact::factory(),
+            'state' => 'START',
+            'is_active' => true,
+            'last_message_at' => now(),
         ];
     }
 }

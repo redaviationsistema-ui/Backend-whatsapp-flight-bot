@@ -2,7 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Models\WhatsAppConversation;
+use App\Models\WhatsAppMessage;
 use App\Services\WhatsApp\WhatsAppChatbotService;
 use App\Services\WhatsApp\WhatsAppConversationService;
 use App\Services\WhatsApp\WhatsAppMessageService;
@@ -17,47 +17,99 @@ class ProcessWhatsAppMessage implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 3;
+    public int $tries = 5;
 
-    public int $timeout = 60;
+    public int $timeout = 180;
 
+    /** @var array<int, int> */
+    public array $backoff = [5, 15, 30, 60];
+
+    /** @param array<string, mixed> $payload */
     public function __construct(public array $payload) {}
 
-    public function handle(
-        WhatsAppConversationService $conversationService,
-        WhatsAppMessageService $messageService,
-        WhatsAppChatbotService $chatbotService,
-        WhatsAppService $whatsAppService,
-    ): void {
-        try {
-            $messagePayloads = $this->messagePayloads();
-
-            Log::info('WhatsApp message job started.', [
-                'message_count' => count($messagePayloads),
-                'queue_connection' => config('queue.default'),
-            ]);
-
-            foreach ($messagePayloads as $messagePayload) {
-                $this->processMessagePayload(
-                    $messagePayload,
-                    $conversationService,
-                    $messageService,
-                    $chatbotService,
-                    $whatsAppService,
-                );
+    public function handle(WhatsAppConversationService $conversationService, WhatsAppMessageService $messageService, WhatsAppChatbotService $chatbotService, WhatsAppService $whatsAppService): void
+    {
+        foreach ($this->payload['entry'] ?? [] as $entry) {
+            foreach ($entry['changes'] ?? [] as $change) {
+                foreach ($change['value']['statuses'] ?? [] as $status) {
+                    $messageService->recordStatus($status);
+                }
             }
-
-            Log::info('WhatsApp message job finished.', [
-                'message_count' => count($messagePayloads),
-            ]);
-        } catch (Throwable $throwable) {
-            Log::error('WhatsApp inbound message processing failed.', [
-                'error' => $throwable->getMessage(),
-                'payload' => $this->payload,
-            ]);
-
-            throw $throwable;
         }
+        foreach ($this->messagePayloads() as $payload) {
+            $message = $payload['message'];
+            $messageId = (string) ($message['id'] ?? '');
+            $from = (string) ($message['from'] ?? '');
+            if ($messageId === '' || $from === '') {
+                continue;
+            }
+            $conversationService->withContactLock($from, function () use ($payload, $message, $messageId, $from, $conversationService, $messageService, $chatbotService, $whatsAppService): void {
+                $inbound = WhatsAppMessage::query()->where('message_id', $messageId)->first();
+                if ($inbound?->processed_at) {
+                    return;
+                }
+                if (! $inbound) {
+                    $inbound = DB::transaction(function () use ($payload, $message, $messageId, $from, $conversationService, $messageService): WhatsAppMessage {
+                        $contact = $conversationService->findOrCreateContact($from, data_get($payload, 'contact.profile.name'), ['wa_id' => $from]);
+                        $conversation = $conversationService->findOrCreateActiveConversation($contact);
+                        $conversation->update(['last_message_at' => now(), 'is_active' => true]);
+
+                        return $messageService->storeInboundMessage($conversation, $messageId, $message['type'] ?? 'unknown', $this->extractText($message), $message, isset($message['timestamp']) ? (int) $message['timestamp'] : null);
+                    });
+                }
+                $pending = $inbound->conversation->messages()->where('direction', 'inbound')->whereNull('processed_at')->where('id', '<=', $inbound->id)->orderBy('id')->get();
+                foreach ($pending as $pendingMessage) {
+                    $this->processInbound($pendingMessage, $conversationService, $messageService, $chatbotService, $whatsAppService);
+                }
+            });
+        }
+    }
+
+    private function processInbound(WhatsAppMessage $inbound, WhatsAppConversationService $conversationService, WhatsAppMessageService $messageService, WhatsAppChatbotService $chatbotService, WhatsAppService $whatsAppService): void
+    {
+        $conversation = $inbound->conversation()->firstOrFail();
+        if (($conversation->transferred_to_human_at || $conversation->state === 'TRANSFER_TO_HUMAN') && ! isset($inbound->processing_context['pending_response'])) {
+            $inbound->update(['processed_at' => now(), 'processing_context' => null]);
+
+            return;
+        }
+        do {
+            $context = $inbound->processing_context ?? [];
+            if (! isset($context['pending_response'])) {
+                if (($context['input_applied'] ?? false) && ! in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'CREATE_QUOTE'], true)) {
+                    break;
+                }
+                DB::transaction(function () use ($inbound, $conversation, $context, $conversationService, $chatbotService): void {
+                    $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
+                    $result = ($context['input_applied'] ?? false)
+                        ? $chatbotService->continueAutomatedState($conversation, $flightRequest)
+                        : ($inbound->body === null ? ['state' => $conversation->state, 'message' => 'Por favor responde con texto para continuar.'] : $chatbotService->handleIncomingMessage($conversation, $flightRequest, $inbound->body));
+                    if ($result['state'] === 'TRANSFER_TO_HUMAN') {
+                        $conversationService->transferToHuman($conversation);
+                    } else {
+                        $conversationService->moveToState($conversation, $result['state']);
+                    }
+                    $inbound->update(['processing_context' => ['input_applied' => true, 'pending_response' => $result['message']]]);
+                });
+            }
+            $body = $inbound->processing_context['pending_response'];
+            if ($body !== '') {
+                $response = $whatsAppService->sendTextMessage($conversation->contact->phone_number, $body);
+                DB::transaction(function () use ($messageService, $conversation, $body, $response, $inbound): void {
+                    $messageService->storeOutboundMessage($conversation, $body, $response);
+                    $inbound->update(['processing_context' => ['input_applied' => true]]);
+                });
+            } else {
+                $inbound->update(['processing_context' => ['input_applied' => true]]);
+            }
+            $conversation->refresh();
+        } while (in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'CREATE_QUOTE'], true));
+        $inbound->update(['processed_at' => now(), 'processing_context' => null]);
+    }
+
+    public function failed(?Throwable $exception): void
+    {
+        Log::error('WhatsApp message processing exhausted retries.', ['exception_type' => $exception ? $exception::class : null]);
     }
 
     /**
@@ -101,104 +153,6 @@ class ProcessWhatsAppMessage implements ShouldQueue
     }
 
     /**
-     * @param  array{message:array<string, mixed>, contact:array<string, mixed>, metadata:array<string, mixed>, waba_id?:mixed}  $messagePayload
-     */
-    private function processMessagePayload(
-        array $messagePayload,
-        WhatsAppConversationService $conversationService,
-        WhatsAppMessageService $messageService,
-        WhatsAppChatbotService $chatbotService,
-        WhatsAppService $whatsAppService,
-    ): void {
-        $message = $messagePayload['message'];
-        $messageId = (string) ($message['id'] ?? '');
-        $from = (string) ($message['from'] ?? '');
-        $text = $this->extractText($message);
-
-        Log::info('WhatsApp inbound message extracted.', [
-            'message_id' => $messageId,
-            'from' => $from,
-            'type' => $message['type'] ?? null,
-            'has_text_body' => $text !== null,
-            'incoming_waba_id' => $messagePayload['waba_id'] ?? null,
-            'incoming_phone_number_id' => $messagePayload['metadata']['phone_number_id'] ?? null,
-            'configured_phone_number_id' => config('services.whatsapp.phone_number_id'),
-        ]);
-
-        if ($messageId === '' || $from === '') {
-            Log::warning('WhatsApp inbound message skipped because identifiers are missing.', [
-                'payload' => $messagePayload,
-            ]);
-
-            return;
-        }
-
-        if ($messageService->messageExists($messageId)) {
-            Log::info('WhatsApp inbound message skipped because it was already processed.', [
-                'message_id' => $messageId,
-            ]);
-
-            return;
-        }
-
-        $conversation = DB::transaction(function () use ($conversationService, $messageService, $messagePayload, $message, $messageId, $from): WhatsAppConversation {
-            $contactPayload = $messagePayload['contact'];
-            $profile = $contactPayload['profile'] ?? [];
-
-            $contact = $conversationService->findOrCreateContact(
-                $from,
-                $profile['name'] ?? null,
-                ['wa_id' => $contactPayload['wa_id'] ?? $from],
-            );
-
-            $conversation = $conversationService->findOrCreateActiveConversation($contact);
-
-            $messageService->storeInboundMessage(
-                $conversation,
-                $messageId,
-                (string) ($message['type'] ?? 'unknown'),
-                $this->extractText($message),
-                $message,
-                isset($message['timestamp']) ? (int) $message['timestamp'] : null,
-            );
-
-            return $conversation->refresh();
-        });
-
-        Log::info('WhatsApp inbound message persisted.', [
-            'message_id' => $messageId,
-            'conversation_id' => $conversation->id,
-            'state' => $conversation->state,
-        ]);
-
-        $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
-        $result = $chatbotService->handleIncomingMessage($conversation, $flightRequest, $text ?? '');
-
-        Log::info('WhatsApp chatbot produced response.', [
-            'message_id' => $messageId,
-            'conversation_id' => $conversation->id,
-            'next_state' => $result['state'],
-            'response_length' => strlen($result['message']),
-        ]);
-
-        if ($result['state'] === 'TRANSFER_TO_HUMAN') {
-            $conversationService->transferToHuman($conversation);
-        } else {
-            $conversationService->moveToState($conversation, $result['state']);
-        }
-
-        $messageService->storeOutboundMessage($conversation, $result['message']);
-        $whatsAppService->sendTextMessage($from, $result['message']);
-
-        Log::info('WhatsApp chatbot response sent.', [
-            'message_id' => $messageId,
-            'to' => $from,
-        ]);
-
-        $this->continueAutomatedFlow($conversation->refresh(), $from, $conversationService, $messageService, $chatbotService, $whatsAppService);
-    }
-
-    /**
      * @param  array<string, mixed>  $message
      */
     private function extractText(array $message): ?string
@@ -222,46 +176,5 @@ class ProcessWhatsAppMessage implements ShouldQueue
         }
 
         return null;
-    }
-
-    public function failed(?Throwable $exception): void
-    {
-        Log::error('WhatsApp message processing failed.', [
-            'error' => $exception?->getMessage(),
-            'payload' => $this->payload,
-        ]);
-    }
-
-    private function continueAutomatedFlow(
-        WhatsAppConversation $conversation,
-        string $to,
-        WhatsAppConversationService $conversationService,
-        WhatsAppMessageService $messageService,
-        WhatsAppChatbotService $chatbotService,
-        WhatsAppService $whatsAppService,
-    ): void {
-        while (in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'CREATE_QUOTE'], true)) {
-            $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
-            $result = $chatbotService->continueAutomatedState($conversation, $flightRequest);
-
-            if ($result['message'] === '') {
-                return;
-            }
-
-            if ($result['state'] === 'TRANSFER_TO_HUMAN') {
-                $conversationService->transferToHuman($conversation);
-            } else {
-                $conversationService->moveToState($conversation, $result['state']);
-            }
-
-            $messageService->storeOutboundMessage($conversation, $result['message']);
-            $whatsAppService->sendTextMessage($to, $result['message']);
-            Log::info('WhatsApp automated state response sent.', [
-                'conversation_id' => $conversation->id,
-                'state' => $result['state'],
-                'to' => $to,
-            ]);
-            $conversation = $conversation->refresh();
-        }
     }
 }
