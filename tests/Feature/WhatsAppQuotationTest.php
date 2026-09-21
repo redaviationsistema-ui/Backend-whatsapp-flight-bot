@@ -88,6 +88,40 @@ class WhatsAppQuotationTest extends TestCase
         $this->assertStringContainsString('Tramo 3: Monterrey → Toluca', $summary);
     }
 
+    public function test_legacy_wifi_and_catering_fields_do_not_block_or_appear_in_summary(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()->create([
+            'origin' => 'Monterrey',
+            'destination' => 'Tampico',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '15:00:00',
+            'is_time_flexible' => false,
+            'passengers' => 4,
+            'trip_type' => 'ONE_WAY',
+            'luggage_count' => 2,
+            'has_pets' => false,
+            'aircraft_preference' => null,
+            'allow_alternate_airports' => true,
+            'catering_required' => true,
+            'ground_transport_required' => true,
+            'wifi_required' => true,
+            'other_services' => 'Traslado aeropuerto-hotel',
+            'client_name' => 'Juan Pérez',
+            'client_email' => 'juan@example.com',
+            'notes' => 'Sin observaciones',
+        ]);
+        $flight->conversation->update(['state' => 'SHOW_SUMMARY']);
+
+        $summary = app(WhatsAppChatbotService::class)->summaryMessage($flight);
+        $result = app(WhatsAppChatbotService::class)->handleIncomingMessage($flight->conversation, $flight, 'confirmar');
+
+        $this->assertStringNotContainsString('Wi-Fi', $summary);
+        $this->assertStringNotContainsString('Catering', $summary);
+        $this->assertStringContainsString('Transporte terrestre', $summary);
+        $this->assertStringContainsString('Traslado aeropuerto-hotel', $summary);
+        $this->assertSame('SEARCH_FLIGHTS', $result['state']);
+    }
+
     public function test_editing_passengers_preserves_other_answers_and_returns_to_summary(): void
     {
         $this->travelTo(Carbon::parse('2026-09-20 12:00:00', 'America/Mexico_City'));
@@ -213,6 +247,19 @@ class WhatsAppQuotationTest extends TestCase
         $this->assertStringContainsString('exclusivamente en renta y cotización de vuelos privados', $result['message']);
     }
 
+    public function test_parts_intent_does_not_start_quote_or_store_location(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Busco una refacción P/N 123 para un motor');
+
+        $this->assertSame('ASK_ORIGIN', $result['state']);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertStringContainsString('exclusivamente en renta y cotización de vuelos privados', $result['message']);
+    }
+
     public function test_invalid_location_answer_stays_in_state_without_saving_text(): void
     {
         $flight = WhatsAppFlightRequest::factory()
@@ -245,6 +292,25 @@ class WhatsAppQuotationTest extends TestCase
         $this->assertStringContainsString('¿A qué hora te gustaría salir?', $result['message']);
     }
 
+    public function test_extracts_transcribed_route_with_date_time_passengers_and_trip_type(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'START']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Hola necesito un vuelo saliendo de Toluca el viernes como a las ocho de la noche somos cuatro y vamos a Cancún solo ida');
+
+        $flight->refresh();
+        $this->assertSame('Toluca', $flight->origin);
+        $this->assertSame('Cancún', $flight->destination);
+        $this->assertSame('2026-09-25', $flight->departure_date->toDateString());
+        $this->assertSame('20:00:00', $flight->departure_time);
+        $this->assertSame(4, $flight->passengers);
+        $this->assertSame('ONE_WAY', $flight->trip_type);
+        $this->assertSame('ASK_TIME_FLEXIBILITY', $result['state']);
+    }
+
     public function test_valid_route_details_overwrite_previous_invalid_locations(): void
     {
         $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
@@ -272,6 +338,118 @@ class WhatsAppQuotationTest extends TestCase
         $this->assertSame('ASK_BUDGET', $result['state']);
         $this->assertNull($flight->refresh()->budget);
         $this->assertStringContainsString('No alcancé a identificar un presupuesto', $result['message']);
+    }
+
+    #[TestWith(['hoy', '2026-09-21'])]
+    #[TestWith(['mañana ✈️', '2026-09-22'])]
+    #[TestWith(['pasado mañana', '2026-09-23'])]
+    #[TestWith(['el viernes.', '2026-09-25'])]
+    #[TestWith(['el próximo viernes', '2026-09-25'])]
+    #[TestWith(['23 sep', '2026-09-23'])]
+    #[TestWith(['23/09/2026', '2026-09-23'])]
+    public function test_more_natural_departure_dates_are_accepted(string $input, string $expected): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_DEPARTURE_DATE']), 'conversation')
+            ->create();
+
+        $this->answer($flight, $input);
+
+        $this->assertSame($expected, $flight->refresh()->departure_date->toDateString());
+    }
+
+    public function test_return_weekday_uses_next_valid_day_after_departure(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21', config('whatsapp.timezone')));
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_RETURN_DATE']), 'conversation')
+            ->create(['departure_date' => '2026-09-26']);
+
+        $this->answer($flight, 'el viernes');
+
+        $this->assertSame('2026-10-02', $flight->refresh()->return_date->toDateString());
+    }
+
+    #[TestWith(['8pm', '20:00:00'])]
+    #[TestWith(['a las 8 de la noche', '20:00:00'])]
+    #[TestWith(['ocho de la mañana', '08:00:00'])]
+    #[TestWith(['mediodía', '12:00:00'])]
+    #[TestWith(['medianoche', '00:00:00'])]
+    public function test_natural_times_are_accepted(string $input, string $expected): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_DEPARTURE_TIME']), 'conversation')
+            ->create();
+
+        $this->answer($flight, $input);
+
+        $this->assertSame($expected, $flight->refresh()->departure_time);
+    }
+
+    public function test_ambiguous_time_period_does_not_save_or_advance(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_DEPARTURE_TIME']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'en la noche');
+
+        $this->assertSame('ASK_DEPARTURE_TIME', $result['state']);
+        $this->assertNull($flight->refresh()->departure_time);
+    }
+
+    #[TestWith(['cuatro pasajeros', 4])]
+    #[TestWith(['6 adultos y 2 niños', 8])]
+    public function test_passenger_counts_accept_words_and_totals(string $input, int $expected): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_PASSENGERS']), 'conversation')
+            ->create();
+
+        $this->answer($flight, $input);
+
+        $this->assertSame($expected, $flight->refresh()->passengers);
+    }
+
+    #[TestWith(['20k', 20000])]
+    #[TestWith(['máximo 30 mil', 30000])]
+    #[TestWith(['sin presupuesto', null])]
+    public function test_budget_accepts_natural_amounts(string $input, ?int $expected): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_BUDGET']), 'conversation')
+            ->create();
+
+        $this->answer($flight, $input);
+
+        $this->assertSame($expected, $flight->refresh()->budget === null ? null : (int) $flight->budget);
+    }
+
+    public function test_name_and_email_are_cleaned_from_natural_answers(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_NAME']), 'conversation')
+            ->create();
+
+        $this->answer($flight, 'mi nombre es Kevin Flores');
+        $this->answer($flight, 'mi correo es CORREO@EXAMPLE.COM');
+
+        $flight->refresh();
+        $this->assertSame('Kevin Flores', $flight->client_name);
+        $this->assertSame('correo@example.com', $flight->client_email);
+    }
+
+    public function test_natural_passenger_correction_updates_without_restart(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_TRIP_TYPE']), 'conversation')
+            ->create(['passengers' => 4]);
+
+        $result = $this->answer($flight, 'somos 5 no 4');
+
+        $this->assertSame(5, $flight->refresh()->passengers);
+        $this->assertStringContainsString('actualicé los pasajeros', $result['message']);
     }
 
     #[TestWith(['ASK_PASSENGERS', '9', 'passengers', 9, 'ASK_TRIP_TYPE', '9 pasajeros'])]
@@ -302,7 +480,7 @@ class WhatsAppQuotationTest extends TestCase
             '2' => ['2026-10-05', '17:00'],
             '3' => ['Monterrey', '2026-10-05', '15:00', 'Toluca', '2026-10-07', '14:30', 'listo'],
             default => [],
-        }, '4', '4 maletas', 'ninguno', 'sí, un perro de 5 kg', 'sin preferencia', 'sí', 'sí', 'no', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', '50000 USD', 'ninguna'];
+        }, '4', '4 maletas', 'ninguno', 'sí, un perro de 5 kg', 'sin preferencia', 'sí', 'no', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', '50000 USD', 'ninguna'];
         foreach ($answers as $answer) {
             $this->answer($flight, $answer);
         }

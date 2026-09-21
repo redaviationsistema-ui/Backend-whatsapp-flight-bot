@@ -29,9 +29,7 @@ class WhatsAppChatbotService
         'ASK_PETS' => ['field' => 'has_pets', 'label' => 'Mascotas', 'prompt' => '¿Viajan mascotas?', 'type' => 'pets'],
         'ASK_AIRCRAFT_PREFERENCE' => ['field' => 'aircraft_preference', 'label' => 'Aeronave', 'prompt' => '¿Tienes preferencia de aeronave?', 'type' => 'text'],
         'ASK_ALTERNATE_AIRPORTS' => ['field' => 'allow_alternate_airports', 'label' => 'Aeropuertos alternos', 'prompt' => '¿Aceptas aeropuertos alternos? Sí o no.', 'type' => 'boolean'],
-        'ASK_CATERING' => ['field' => 'catering_required', 'label' => 'Catering', 'prompt' => '¿Requieres catering? Sí o no.', 'type' => 'boolean'],
         'ASK_GROUND_TRANSPORT' => ['field' => 'ground_transport_required', 'label' => 'Transporte terrestre', 'prompt' => '¿Requieres transporte terrestre? Sí o no.', 'type' => 'boolean'],
-        'ASK_WIFI' => ['field' => 'wifi_required', 'label' => 'Wi-Fi', 'prompt' => '¿Requieres Wi-Fi? Sí o no.', 'type' => 'boolean'],
         'ASK_OTHER_SERVICES' => ['field' => 'other_services', 'label' => 'Otros servicios', 'prompt' => '¿Necesitas otros servicios o escalas técnicas?', 'type' => 'text'],
         'ASK_NAME' => ['field' => 'client_name', 'label' => 'Nombre', 'prompt' => '¿Cuál es tu nombre completo?', 'type' => 'text'],
         'ASK_EMAIL' => ['field' => 'client_email', 'label' => 'Correo', 'prompt' => '¿Cuál es tu correo electrónico?', 'type' => 'email'],
@@ -172,7 +170,12 @@ class WhatsAppChatbotService
             || str_contains($message, 'refaccion')
             || str_contains($message, 'refacciones')
             || str_contains($message, 'pieza')
-            || str_contains($message, 'piezas');
+            || str_contains($message, 'piezas')
+            || str_contains($message, 'motor')
+            || str_contains($message, 'motores')
+            || str_contains($message, 'empleo')
+            || str_contains($message, 'mantenimiento')
+            || str_contains($message, 'certificacion');
     }
 
     private function looksLikeFlightRentalMessage(string $message): bool
@@ -193,12 +196,14 @@ class WhatsAppChatbotService
 
     private function isHelpRequest(string $message): bool
     {
-        return in_array($message, ['ayuda', 'ejemplo', 'dame un ejemplo', 'no entiendo', 'no entendi', 'como', 'como?', 'como respondo', 'como lo quieres', 'que pongo'], true);
+        return in_array($message, ['ayuda', 'ejemplo', 'dame un ejemplo', 'no entiendo', 'no entendi', 'como', 'como?', 'como respondo', 'como lo quieres', 'que pongo', 'que necesitas'], true);
     }
 
     private function normalize(string $message): string
     {
-        return Str::of($message)->lower()->ascii()->trim()->squish()->toString();
+        $message = preg_replace('/[^\pL\pN@._:+,\-\/\s]/u', ' ', $message) ?? $message;
+
+        return Str::of($message)->lower()->ascii()->trim()->trim('.;,')->squish()->toString();
     }
 
     /** @return array{state:string,message:string} */
@@ -310,8 +315,8 @@ class WhatsAppChatbotService
 
         $message = match (self::QUESTIONS[$state]['type']) {
             'date' => 'Puedes decir mañana, el próximo viernes o 2026-10-02.',
-            'time' => 'Puedes decir 2 pm, 14:30 o por la mañana.',
-            'passengers' => 'Puedes decir 4 o somos 4.',
+            'time' => 'Puedes decirme algo como 8 de la noche, 8 pm o 20:00.',
+            'passengers' => 'Puedes decir 4, somos 4 o cuatro pasajeros.',
             'count' => 'Puedes decir 2, ninguno o no.',
             'boolean' => 'Responde sí o no.',
             'pets' => 'Puedes decir no, o sí y agregar detalles.',
@@ -443,10 +448,10 @@ class WhatsAppChatbotService
             'time' => $this->parseTime($message),
             'passengers', 'count' => $this->parseCount($normalized, $question['type'] === 'count'),
             'boolean', 'pets' => $this->parseBoolean($normalized, $question['type'] === 'pets'),
-            'email' => filter_var($message, FILTER_VALIDATE_EMAIL) ?: null,
+            'email' => filter_var($this->extractEmail($message) ?? $message, FILTER_VALIDATE_EMAIL) ?: null,
             'trip' => $this->parseTripType($normalized),
             'money' => $this->parseMoney($normalized),
-            default => $message,
+            default => $this->cleanTextAnswer($message, $field),
         };
         if (($value === null && $question['type'] !== 'money') || ($value === false && in_array($question['type'], ['passengers', 'count', 'money'], true))) {
             return $this->question($state, $this->invalidMessage($question['type'], $question['label']), $flightRequest);
@@ -459,6 +464,13 @@ class WhatsAppChatbotService
             if ($other && $normalized === $this->normalize($other)) {
                 return $this->question($state, 'Veo que pusiste el mismo lugar de salida y llegada. ¿A qué otro destino te gustaría viajar?', $flightRequest);
             }
+        }
+        if ($field === 'return_date') {
+            $parsedDate = $this->parseDate($message, $flightRequest->departure_date);
+            $value = $parsedDate?->toDateString();
+        }
+        if ($field === 'return_date' && $value === null) {
+            return $this->question($state, $this->invalidMessage($question['type'], $question['label']), $flightRequest);
         }
         if ($field === 'return_date' && $value < $flightRequest->departure_date?->toDateString()) {
             return $this->question($state, 'El regreso no puede ser antes de la salida. ¿Qué otra fecha tienes en mente?', $flightRequest);
@@ -519,14 +531,14 @@ class WhatsAppChatbotService
     }
 
     /**
-     * @return array{origin?:string,destination?:string,departure_date?:string,passengers?:int,trip_type?:string}
+     * @return array{origin?:string,destination?:string,departure_date?:string,departure_time?:string,passengers?:int,trip_type?:string}
      */
     private function extractFlightDetails(string $message): array
     {
         $normalized = $this->normalize($message);
         $details = [];
 
-        if (preg_match('/(?:salida es de|salgo de|salimos de|desde|de)\s+([\pL .]{2,60}?)\s+(?:a|hacia)\s+([\pL .]{2,60}?)(?=\s+(?:el|para|con|somos|únicamente|unicamente|solo|sólo|\d|$))/iu', $message, $match)) {
+        if (preg_match('/(?:salida es de|salgo de|salimos de|saliendo de|salir de|desde|de)\s+([\pL .]{2,60}?)\s+\b(?:(?:a(?!\s+las?\b))|hacia|para|vamos a|voy a)\b\s+([\pL .]{2,60}?)(?=\s+(?:el|este|para|con|somos|únicamente|unicamente|solo|sólo|como|a las|\d|$))/iu', $message, $match)) {
             $origin = $this->normalizeLocationValue($match[1]);
             $destination = $this->normalizeLocationValue($match[2]);
             if ($this->isPlausibleLocation($origin) && $this->isPlausibleLocation($destination) && $this->normalize($origin) !== $this->normalize($destination)) {
@@ -534,19 +546,37 @@ class WhatsAppChatbotService
                 $details['destination'] = $destination;
             }
         }
+        if (! isset($details['origin'], $details['destination'])
+            && preg_match('/(?:salgo de|salimos de|saliendo de|salir de|desde|de)\s+([\pL .]{2,60}?)(?=\s+(?:el|este|proximo|próximo|como|a las|somos|voy|vamos|$))/iu', $message, $originMatch)
+            && preg_match('/\b(?:voy a|vamos a|(?:a(?!\s+las?\b))|hacia|para)\b\s+([\pL .]{2,60}?)(?=\s+(?:el|este|como|a las|somos|solo|sólo|$))/iu', $message, $destinationMatch)) {
+            $origin = $this->normalizeLocationValue($originMatch[1]);
+            $destination = $this->normalizeLocationValue($destinationMatch[1]);
+            if ($this->isPlausibleLocation($origin) && $this->isPlausibleLocation($destination) && $this->normalize($origin) !== $this->normalize($destination)) {
+                $details['origin'] = $origin;
+                $details['destination'] = $destination;
+            }
+        }
 
-        if (preg_match('/\b(\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)(?:\s+de\s+\d{4})?|\d{4}-\d{2}-\d{2}|hoy|mañana|manana|pasado mañana|pasado manana)\b/iu', $message, $match)) {
+        if (preg_match('/\b(\d{1,2}\s+(?:de\s+)?(?:ene|enero|feb|febrero|mar|marzo|abr|abril|may|mayo|jun|junio|jul|julio|ago|agosto|sep|sept|septiembre|oct|octubre|nov|noviembre|dic|diciembre)(?:\s+de\s+\d{4})?|\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:el\s+|este\s+|proximo\s+|pr[oó]ximo\s+)?(?:lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)|hoy|mañana|manana|pasado mañana|pasado manana)\b/iu', $message, $match)) {
             $date = $this->parseDate($match[1]);
             if ($date && ! $date->lt(Carbon::today(config('whatsapp.timezone')))) {
                 $details['departure_date'] = $date->toDateString();
             }
         }
 
-        if (preg_match('/\b(?:somos|para|con)?\s*(\d{1,2})\s*(?:pasajeros|personas|pax)\b/', $normalized, $match)) {
-            $passengers = (int) $match[1];
-            if ($passengers >= 1 && $passengers <= 99) {
-                $details['passengers'] = $passengers;
-            }
+        $time = $this->parseTime($this->extractTimePhrase($message) ?? $message);
+        if ($time) {
+            $details['departure_time'] = $time;
+        }
+
+        $passengers = false;
+        if (preg_match('/\b(?:(?:somos|viajamos|seriamos|serian|para|con)\s+)?((?:\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:\s+(?:adultos?|ni(?:n|ñ)os?))?(?:\s+y\s+(?:\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+(?:adultos?|ni(?:n|ñ)os?))?)\s*(?:pasajeros|personas|pax|adultos|ninos|niños)\b/', $normalized, $passengerMatch)) {
+            $passengers = $this->parseCount($passengerMatch[1], false);
+        } elseif (preg_match('/\bsomos\s+(\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b/', $normalized, $passengerMatch)) {
+            $passengers = $this->parseCount($passengerMatch[1], false);
+        }
+        if ($passengers !== false) {
+            $details['passengers'] = $passengers;
         }
 
         if (preg_match('/\b(?:solo|sólo|unicamente|únicamente)\s+ida\b/u', $normalized)) {
@@ -574,6 +604,14 @@ class WhatsAppChatbotService
             : 'Perfecto, tengo '.implode(', ', $parts).'.';
     }
 
+    private function extractTimePhrase(string $message): ?string
+    {
+        return preg_match('/(?:como\s+|alrededor de\s+|sobre\s+)?(?:a\s+las?\s+((?:\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?::[0-5]\d)?(?:\s*(?:am|pm|de la manana|de la mañana|de la tarde|de la noche))?)|((?:\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?::[0-5]\d)?\s*(?:am|pm|de la manana|de la mañana|de la tarde|de la noche)|mediod[ií]a|medianoche))/iu', $message, $match)
+            ? $match[1]
+                ?: $match[2]
+            : null;
+    }
+
     /** @return array{state:string,message:string} */
     private function advance(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $next): array
     {
@@ -599,7 +637,7 @@ class WhatsAppChatbotService
     private function normalizeLocationValue(string $message): string
     {
         $value = trim(preg_replace('/\s+/', ' ', $message) ?? $message);
-        $value = preg_replace('/^(?:desde|de|a|hacia)\s+/iu', '', $value) ?? $value;
+        $value = preg_replace('/^(?:la salida es de|salgo de|salimos de|saliendo de|quiero salir de|salir de|desde|de|voy a|vamos a|a|hacia|para)\s+/iu', '', $value) ?? $value;
         $value = preg_replace('/^aeropuerto(?:\s+internacional)?\s+de\s+/iu', '', $value) ?? $value;
         $value = trim($value, " \t\n\r\0\x0B.,");
 
@@ -620,11 +658,30 @@ class WhatsAppChatbotService
         if (preg_match('/\d|[@|]/', $value) === 1) {
             return false;
         }
-        if (preg_match('/\b(?:interesado|comprar|comprarlo|venta|publicacion|refaccion|refacciones|pieza|piezas|precio|cuesta|avion)\b/', $normalized) === 1) {
+        if (preg_match('/\b(?:interesado|comprar|comprarlo|venta|publicacion|refaccion|refacciones|pieza|piezas|precio|cuesta|avion|lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|tarde|noche|somos|pasajeros|personas)\b/', $normalized) === 1) {
             return false;
         }
 
         return preg_match('/^[\pL][\pL .\'-]{1,79}$/u', $value) === 1;
+    }
+
+    private function extractEmail(string $message): ?string
+    {
+        return preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $message, $match) ? mb_strtolower($match[0]) : null;
+    }
+
+    private function cleanTextAnswer(string $message, string $field): string
+    {
+        $value = trim($message);
+
+        if ($field === 'client_name') {
+            $value = preg_replace('/^(?:soy|mi nombre es|me llamo|a nombre de)\s+/iu', '', $value) ?? $value;
+        }
+        if ($field === 'company') {
+            $value = preg_replace('/^(?:empresa|cotizo para|es para)\s+/iu', '', $value) ?? $value;
+        }
+
+        return trim($value, " \t\n\r\0\x0B.,");
     }
 
     /** @return array{state:string,message:string} */
@@ -750,7 +807,7 @@ class WhatsAppChatbotService
             '8', 'mascotas' => ['ASK_PETS'],
             '9', 'aeronave' => ['ASK_AIRCRAFT_PREFERENCE'],
             '10', 'datos personales' => ['ASK_NAME', 'ASK_EMAIL', 'ASK_COMPANY'],
-            '11', 'servicios' => ['ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS', 'ASK_CATERING', 'ASK_GROUND_TRANSPORT', 'ASK_WIFI', 'ASK_OTHER_SERVICES'],
+            '11', 'servicios' => ['ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS', 'ASK_GROUND_TRANSPORT', 'ASK_OTHER_SERVICES'],
             '12', 'observaciones' => ['ASK_NOTES'],
             '13', 'presupuesto' => ['ASK_BUDGET'],
             default => [],
@@ -889,14 +946,8 @@ class WhatsAppChatbotService
         if ($flightRequest->is_time_flexible !== null) {
             $lines[] = '🕐 '.($flightRequest->is_time_flexible ? 'Horario flexible' : 'Horario fijo');
         }
-        if ($flightRequest->catering_required !== null) {
-            $lines[] = '🍽️ Catering: '.$this->yesNo($flightRequest->catering_required);
-        }
         if ($flightRequest->ground_transport_required !== null) {
             $lines[] = '🚘 Transporte terrestre: '.$this->yesNo($flightRequest->ground_transport_required);
-        }
-        if ($flightRequest->wifi_required !== null) {
-            $lines[] = '📶 Wi-Fi: '.$this->yesNo($flightRequest->wifi_required);
         }
         if ($flightRequest->other_services) {
             $lines[] = '➕ Otros servicios: '.Str::limit($flightRequest->other_services, 120);
@@ -1001,6 +1052,25 @@ class WhatsAppChatbotService
         if ($allowZero && $this->isNegative($message)) {
             return 0;
         }
+        $total = 0;
+        if (preg_match_all('/(?<![-.\d])(\d{1,2})(?![.\d])\s*(?:adultos?|ni(?:n|ñ)os?|pasajeros?|personas?|pax)?/', $message, $matches)) {
+            foreach ($matches[1] as $match) {
+                $total += (int) $match;
+            }
+            if ($total > 0) {
+                return $total >= ($allowZero ? 0 : 1) && $total <= 99 ? $total : false;
+            }
+        }
+        $words = $this->numberWords();
+        $wordTotal = 0;
+        foreach ($words as $word => $number) {
+            if (preg_match('/\b'.$word.'\b/', $message)) {
+                $wordTotal += $number;
+            }
+        }
+        if ($wordTotal > 0) {
+            return $wordTotal <= 99 ? $wordTotal : false;
+        }
         if (preg_match('/(?<![-.\d])(\d{1,2})(?![.\d])/', $message, $match)) {
             $count = (int) $match[1];
 
@@ -1020,6 +1090,10 @@ class WhatsAppChatbotService
         $clean = preg_replace('/\b(?:aprox|aproximadamente|unos|como|alrededor de|usd|dolares|dolares americanos|mxn|pesos)\b/', ' ', $clean) ?? $clean;
         $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? $clean);
 
+        if (preg_match('/(\d+(?:\.\d+)?)\s*k\b/', $clean, $match)) {
+            return (int) round(((float) $match[1]) * 1000);
+        }
+
         if (preg_match('/(\d+(?:\.\d+)?)\s*mil\b/', $clean, $match)) {
             return (int) round(((float) $match[1]) * 1000);
         }
@@ -1034,8 +1108,8 @@ class WhatsAppChatbotService
     private function parseTripType(string $message): ?string
     {
         return match (true) {
-            in_array($message, ['1', 'one_way', 'one way', 'sencillo', 'solo ida', 'ida', 'solo de ida'], true) => 'ONE_WAY',
-            in_array($message, ['2', 'round_trip', 'round trip', 'redondo', 'ida y vuelta', 'ida y regreso', 'regreso'], true) => 'ROUND_TRIP',
+            in_array($message, ['1', 'one_way', 'one way', 'sencillo', 'solo ida', 'ida', 'solo de ida', 'sin regreso', 'ow'], true) => 'ONE_WAY',
+            in_array($message, ['2', 'round_trip', 'round trip', 'redondo', 'viaje redondo', 'ida y vuelta', 'ida y regreso', 'regreso', 'rt'], true) => 'ROUND_TRIP',
             in_array($message, ['3', 'multi_city', 'multi city', 'multidestino', 'multi destino', 'varios destinos'], true) => 'MULTI_CITY',
             default => null,
         };
@@ -1057,25 +1131,32 @@ class WhatsAppChatbotService
         };
     }
 
-    private function parseDate(string $message): ?Carbon
+    private function parseDate(string $message, mixed $baseDate = null): ?Carbon
     {
         $message = $this->normalize($message);
-        $today = Carbon::today(config('whatsapp.timezone'));
+        $today = $baseDate ? ($baseDate instanceof Carbon ? $baseDate->copy() : Carbon::parse($baseDate, config('whatsapp.timezone'))) : Carbon::today(config('whatsapp.timezone'));
         if (in_array($message, ['hoy', 'manana', 'mañana', 'pasado manana', 'pasado mañana'], true)) {
             return $today->addDays(['hoy' => 0, 'manana' => 1, 'mañana' => 1, 'pasado manana' => 2, 'pasado mañana' => 2][$message]);
         }
-        if (preg_match('/^(?:este |el |proximo )?(lunes|martes|miercoles|jueves|viernes|sabado|domingo)$/', $message, $match)) {
+        if (preg_match('/^(?:(?:este|el|proximo|pr[oó]ximo)\s+)*(lunes|martes|miercoles|jueves|viernes|sabado|domingo)$/', $message, $match)) {
             $day = array_search($match[1], ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'], true);
+            $days = ($day - $today->dayOfWeek + 7) % 7;
+            if (str_contains($message, 'proximo') || str_contains($message, 'proximo') || $days === 0) {
+                $days = $days === 0 ? 7 : $days;
+            }
 
-            return $today->addDays(($day - $today->dayOfWeek + 7) % 7);
+            return $today->addDays($days);
         }
-        if (preg_match('/^(\d{1,2}) de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)(?: de (\d{4}))?$/', $message, $match)) {
-            $month = array_search($match[2], ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'], true) + 1;
+        if (preg_match('/^(\d{1,2})(?: de)? (ene|enero|feb|febrero|mar|marzo|abr|abril|may|mayo|jun|junio|jul|julio|ago|agosto|sep|sept|septiembre|oct|octubre|nov|noviembre|dic|diciembre)(?: de (\d{4}))?$/', $message, $match)) {
+            $month = $this->spanishMonthNumber($match[2]);
             $year = (int) ($match[3] ?? $today->year);
             if (! isset($match[3]) && sprintf('%04d-%02d-%02d', $year, $month, $match[1]) < $today->toDateString()) {
                 $year++;
             }
             $message = sprintf('%04d-%02d-%02d', $year, $month, $match[1]);
+        }
+        if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $message, $match)) {
+            $message = sprintf('%04d-%02d-%02d', $match[3], $match[2], $match[1]);
         }
         if (! preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $message, $parts) || ! checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])) {
             return null;
@@ -1089,17 +1170,26 @@ class WhatsAppChatbotService
     {
         $message = $this->normalize($message);
         $message = preg_replace('/^(?:a las?|como a las?|sobre las?) /', '', $message) ?? $message;
-        if (in_array($message, ['manana', 'por la manana', 'en la manana'], true)) {
-            return '09:00:00';
-        }
         if (in_array($message, ['mediodia', 'medio dia'], true)) {
             return '12:00:00';
         }
-        if (in_array($message, ['tarde', 'por la tarde', 'en la tarde'], true)) {
-            return '15:00:00';
+        if (in_array($message, ['medianoche', 'media noche'], true)) {
+            return '00:00:00';
         }
-        if (in_array($message, ['noche', 'por la noche', 'en la noche'], true)) {
-            return '20:00:00';
+        if (in_array($message, ['manana', 'por la manana', 'en la manana', 'tarde', 'por la tarde', 'en la tarde', 'noche', 'por la noche', 'en la noche', 'temprano'], true)) {
+            return null;
+        }
+        $words = $this->numberWords();
+        foreach ($words as $word => $number) {
+            $message = preg_replace('/\b'.$word.'\b/', (string) $number, $message) ?? $message;
+        }
+        if (preg_match('/^(0?[1-9]|1[0-2])\s*(am|pm)$/', $message, $match)) {
+            $hour = (int) $match[1] % 12;
+            if ($match[2] === 'pm') {
+                $hour += 12;
+            }
+
+            return sprintf('%02d:00:00', $hour);
         }
         if (preg_match('/^(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*(?:de la )?(manana|tarde|noche|am|pm)$/', $message, $match)) {
             $hour = (int) $match[1] % 12;
@@ -1111,6 +1201,26 @@ class WhatsAppChatbotService
         }
 
         return preg_match('/^([01]?\d|2[0-3]):([0-5]\d)(?::00)?$/', $message, $match) ? sprintf('%02d:%02d:00', $match[1], $match[2]) : null;
+    }
+
+    /** @return array<string, int> */
+    private function numberWords(): array
+    {
+        return [
+            'un' => 1, 'uno' => 1, 'una' => 1, 'dos' => 2, 'tres' => 3, 'cuatro' => 4, 'cinco' => 5,
+            'seis' => 6, 'siete' => 7, 'ocho' => 8, 'nueve' => 9, 'diez' => 10, 'once' => 11, 'doce' => 12,
+        ];
+    }
+
+    private function spanishMonthNumber(string $month): int
+    {
+        return [
+            'ene' => 1, 'enero' => 1, 'feb' => 2, 'febrero' => 2, 'mar' => 3, 'marzo' => 3,
+            'abr' => 4, 'abril' => 4, 'may' => 5, 'mayo' => 5, 'jun' => 6, 'junio' => 6,
+            'jul' => 7, 'julio' => 7, 'ago' => 8, 'agosto' => 8, 'sep' => 9, 'sept' => 9,
+            'septiembre' => 9, 'oct' => 10, 'octubre' => 10, 'nov' => 11, 'noviembre' => 11,
+            'dic' => 12, 'diciembre' => 12,
+        ][$month];
     }
 
     /**
