@@ -85,39 +85,37 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
             return;
         }
-        do {
-            $context = $inbound->processing_context ?? [];
-            if (! isset($context['pending_response'])) {
-                if (($context['input_applied'] ?? false) && ! in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'CREATE_QUOTE'], true)) {
-                    break;
+        $context = $inbound->processing_context ?? [];
+        if (! ($context['input_applied'] ?? false)) {
+            DB::transaction(function () use ($inbound, $conversation, $conversationService, $chatbotService): void {
+                $stateBefore = $conversation->state;
+                $this->logAction($inbound, 'apply_input');
+                $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
+                $result = $inbound->body === null
+                    ? ['state' => $stateBefore, 'message' => 'Por favor responde con texto para continuar.']
+                    : $chatbotService->handleIncomingMessage($conversation, $flightRequest, $inbound->body);
+                if ($result['state'] === 'TRANSFER_TO_HUMAN') {
+                    $conversationService->transferToHuman($conversation);
+                } else {
+                    $conversationService->moveToState($conversation, $result['state']);
                 }
-                DB::transaction(function () use ($inbound, $conversation, $context, $conversationService, $chatbotService): void {
-                    $this->logAction($inbound, ($context['input_applied'] ?? false) ? 'continue_state' : 'apply_input');
-                    $flightRequest = $conversationService->findOrCreateFlightRequest($conversation);
-                    $result = ($context['input_applied'] ?? false)
-                        ? $chatbotService->continueAutomatedState($conversation, $flightRequest)
-                        : ($inbound->body === null ? ['state' => $conversation->state, 'message' => 'Por favor responde con texto para continuar.'] : $chatbotService->handleIncomingMessage($conversation, $flightRequest, $inbound->body));
-                    if ($result['state'] === 'TRANSFER_TO_HUMAN') {
-                        $conversationService->transferToHuman($conversation);
-                    } else {
-                        $conversationService->moveToState($conversation, $result['state']);
-                    }
-                    $inbound->update(['processing_context' => ['input_applied' => true, 'pending_response' => $result['message'], 'pending_state' => $result['state']]]);
-                });
-            }
-            $body = $inbound->processing_context['pending_response'];
-            if ($body !== '') {
-                $response = $this->sendPendingReply($inbound, $whatsAppService);
-                DB::transaction(function () use ($messageService, $conversation, $body, $response, $inbound): void {
-                    $messageService->storeOutboundMessage($conversation, $body, $response);
-                    $inbound->update(['processing_context' => ['input_applied' => true]]);
-                });
-                $this->logAction($inbound, 'reply_recorded');
-            } else {
+                $inbound->update(['processing_context' => [
+                    'input_applied' => true,
+                    'state_before' => $stateBefore,
+                    'pending_response' => $result['message'],
+                    'pending_state' => $result['state'],
+                ]]);
+            });
+        }
+        $body = $inbound->processing_context['pending_response'] ?? '';
+        if ($body !== '') {
+            $response = $this->sendPendingReply($inbound, $whatsAppService);
+            DB::transaction(function () use ($messageService, $conversation, $body, $response, $inbound): void {
+                $messageService->storeOutboundMessage($conversation, $body, $response);
                 $inbound->update(['processing_context' => ['input_applied' => true]]);
-            }
-            $conversation->refresh();
-        } while (in_array($conversation->state, ['SEARCH_FLIGHTS', 'SHOW_RESULTS', 'CREATE_QUOTE'], true));
+            });
+            $this->logAction($inbound, 'reply_recorded');
+        }
         $inbound->update(['processed_at' => now(), 'processing_context' => null]);
         $this->logAction($inbound, 'processed');
     }

@@ -193,6 +193,26 @@ class WhatsAppQuotationTest extends TestCase
         Http::assertNothingSent();
     }
 
+    #[TestWith(['ASK_PASSENGERS', '9', 'passengers', 9, 'ASK_TRIP_TYPE', 'Pasajeros: 9'])]
+    #[TestWith(['ASK_LUGGAGE_DESCRIPTION', 'Dos bolsas de equipo', 'luggage_description', 'Dos bolsas de equipo', 'ASK_SPECIAL_LUGGAGE', 'Equipaje: Dos bolsas de equipo'])]
+    #[TestWith(['ASK_AIRCRAFT_PREFERENCE', 'Cabina amplia', 'aircraft_preference', 'Cabina amplia', 'ASK_ALTERNATE_AIRPORTS', 'Aeronave: Cabina amplia'])]
+    #[TestWith(['ASK_NAME', 'María García', 'client_name', 'María García', 'ASK_EMAIL', 'Nombre: María García'])]
+    #[TestWith(['ASK_EMAIL', 'maria@example.org', 'client_email', 'maria@example.org', 'ASK_COMPANY', 'Correo: maria@example.org'])]
+    #[TestWith(['ASK_COMPANY', 'omitir', 'company', null, 'ASK_BUDGET', 'Empresa: Sin indicar'])]
+    #[TestWith(['ASK_PETS', 'no', 'has_pets', false, 'ASK_AIRCRAFT_PREFERENCE', 'Mascotas: No'])]
+    public function test_answers_and_summary_use_only_captured_values(string $state, string $input, string $field, mixed $expected, string $nextState, string $summaryLine): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => $state]), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, $input);
+
+        $this->assertSame($expected, $flight->refresh()->{$field});
+        $this->assertSame($nextState, $result['state']);
+        $this->assertStringContainsString($summaryLine, app(WhatsAppChatbotService::class)->summaryMessage($flight));
+    }
+
     private function collect(string $trip): WhatsAppFlightRequest
     {
         $flight = WhatsAppFlightRequest::factory()->create();

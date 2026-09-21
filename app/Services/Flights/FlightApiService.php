@@ -166,7 +166,7 @@ class FlightApiService
             'final_billable_hours' => $option['final_billable_hours'] ?? $pricing['final_billable_hours'] ?? null,
             'pricing' => $pricing,
             'total' => $option['total_amount'] ?? $option['total'] ?? $option['quoted_total'] ?? $pricing['total_amount'] ?? null,
-            'currency' => $option['currency'] ?? $pricing['currency'] ?? 'USD',
+            'currency' => $option['currency'] ?? $pricing['currency'] ?? null,
             'raw' => $option,
         ];
     }

@@ -55,6 +55,25 @@ class FlightApiServiceTest extends TestCase
         $this->assertSame(55000, $options[0]['total']);
     }
 
+    public function test_missing_currency_is_not_invented_in_options_or_quote_payload(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'https://backend.test/api/v1/client/quotes/preview' => Http::response([
+                'options' => [['aircraft_id' => 101, 'total' => 55000]],
+            ]),
+        ]);
+        $flight = $this->flightRequest();
+        $service = app(FlightApiService::class);
+
+        $options = $service->searchFlights($flight);
+        $flight->update(['official_quote_payload' => $options[0]]);
+
+        $this->assertNull($options[0]['currency']);
+        $this->assertArrayNotHasKey('currency', $service->flightRequestPayload($flight));
+        Http::assertSentCount(1);
+    }
+
     public function test_it_returns_empty_options_when_backend_has_no_matches(): void
     {
         Http::fake([

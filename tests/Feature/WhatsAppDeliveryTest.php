@@ -213,14 +213,17 @@ class WhatsAppDeliveryTest extends TestCase
             'origin' => 'Toluca', 'destination' => 'Cancún', 'departure_date' => '2026-10-02', 'departure_time' => '14:00:00',
             'passengers' => 4, 'trip_type' => 'ONE_WAY', 'status' => 'confirmed', 'confirmed_at' => now(),
         ]);
+        $this->process('in.search', 'continuar');
+        $this->assertSame('SHOW_RESULTS', $conversation->refresh()->state);
         try {
-            $this->process('in.search', '1');
+            $this->process('in.options', 'continuar');
             $this->fail('Expected send failure.');
         } catch (RuntimeException) {
             $this->assertSame('SELECT_AIRCRAFT', $conversation->refresh()->state);
         }
 
-        $this->process('in.search', '1');
+        $this->process('in.options', 'continuar');
+        $this->process('in.search', 'continuar');
 
         $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.options']);
         $this->assertNull($conversation->flightRequest->selected_aircraft_id);

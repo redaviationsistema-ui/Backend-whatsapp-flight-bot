@@ -15,14 +15,14 @@ class WhatsAppChatbotService
     private const QUESTIONS = [
         'ASK_ORIGIN' => ['field' => 'origin', 'label' => 'Origen', 'prompt' => '¿Desde qué ciudad o aeropuerto deseas salir?', 'type' => 'location'],
         'ASK_DESTINATION' => ['field' => 'destination', 'label' => 'Destino', 'prompt' => '¿Cuál es el destino?', 'type' => 'location'],
-        'ASK_DEPARTURE_DATE' => ['field' => 'departure_date', 'label' => 'Fecha de salida', 'prompt' => 'Indica la fecha de salida (AAAA-MM-DD, mañana o 2 de octubre).', 'type' => 'date'],
-        'ASK_DEPARTURE_TIME' => ['field' => 'departure_time', 'label' => 'Hora de salida', 'prompt' => '¿A qué hora deseas salir? Por ejemplo 14:30 o 3 de la tarde.', 'type' => 'time'],
+        'ASK_DEPARTURE_DATE' => ['field' => 'departure_date', 'label' => 'Fecha de salida', 'prompt' => 'Indica la fecha de salida (AAAA-MM-DD o una fecha relativa).', 'type' => 'date'],
+        'ASK_DEPARTURE_TIME' => ['field' => 'departure_time', 'label' => 'Hora de salida', 'prompt' => '¿A qué hora deseas salir? Usa el formato HH:MM.', 'type' => 'time'],
         'ASK_TIME_FLEXIBILITY' => ['field' => 'is_time_flexible', 'label' => 'Horario flexible', 'prompt' => '¿Tu horario es flexible? Sí o no.', 'type' => 'boolean'],
         'ASK_PASSENGERS' => ['field' => 'passengers', 'label' => 'Pasajeros', 'prompt' => '¿Cuántos pasajeros viajarán? (1 a 99)', 'type' => 'passengers'],
         'ASK_TRIP_TYPE' => ['field' => 'trip_type', 'label' => 'Viaje', 'prompt' => "¿Qué tipo de viaje necesitas?\n1. Solo ida\n2. Ida y vuelta\n3. Multidestino", 'type' => 'trip'],
         'ASK_RETURN_DATE' => ['field' => 'return_date', 'label' => 'Fecha de regreso', 'prompt' => 'Indica la fecha de regreso.', 'type' => 'date'],
         'ASK_RETURN_TIME' => ['field' => 'return_time', 'label' => 'Hora de regreso', 'prompt' => 'Indica la hora de regreso (HH:MM).', 'type' => 'time'],
-        'ASK_LEGS' => ['field' => 'legs', 'label' => 'Tramos adicionales', 'prompt' => 'Agrega el siguiente tramo desde tu último destino: destino | fecha | hora. Ejemplo: Monterrey | 2026-10-05 | 15:00. Después escribe listo. Máximo 6 tramos adicionales.', 'type' => 'legs'],
+        'ASK_LEGS' => ['field' => 'legs', 'label' => 'Tramos adicionales', 'prompt' => 'Agrega el siguiente tramo desde tu último destino: destino | fecha (AAAA-MM-DD) | hora (HH:MM). Después escribe listo. Máximo 6 tramos adicionales.', 'type' => 'legs'],
         'ASK_LUGGAGE' => ['field' => 'luggage_count', 'label' => 'Cantidad de equipaje', 'prompt' => '¿Cuántas piezas de equipaje llevarán? Escribe un número, incluso 0.', 'type' => 'count'],
         'ASK_LUGGAGE_DESCRIPTION' => ['field' => 'luggage_description', 'label' => 'Equipaje', 'prompt' => 'Describe el equipaje (tamaño/peso aproximado), o escribe ninguno.', 'type' => 'text'],
         'ASK_SPECIAL_LUGGAGE' => ['field' => 'special_luggage', 'label' => 'Equipaje especial', 'prompt' => '¿Llevas equipaje especial? Descríbelo o escribe ninguno.', 'type' => 'text'],
@@ -70,21 +70,6 @@ class WhatsAppChatbotService
             'FINISHED' => ['state' => 'FINISHED', 'message' => 'Tu cotización ya fue registrada. Escribe asesor si necesitas hacer cambios.'],
             'CANCELLED' => ['state' => 'CANCELLED', 'message' => 'Esta solicitud fue cancelada.'],
             default => $this->question('ASK_ORIGIN'),
-        };
-    }
-
-    /** @return array{state:string,message:string} */
-    public function continueAutomatedState(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest): array
-    {
-        if (! $flightRequest->confirmed_at) {
-            return $this->showSummary($flightRequest);
-        }
-
-        return match ($conversation->state) {
-            'SEARCH_FLIGHTS' => $this->searchFlights($flightRequest),
-            'SHOW_RESULTS' => $this->showResults($flightRequest),
-            'CREATE_QUOTE' => $this->createQuote($flightRequest),
-            default => ['state' => $conversation->state, 'message' => ''],
         };
     }
 
@@ -262,7 +247,7 @@ class WhatsAppChatbotService
             }
             $flightRequest->update(['status' => 'confirmed', 'confirmed_at' => $flightRequest->confirmed_at ?? now()]);
 
-            return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Solicitud confirmada. Buscaremos opciones disponibles.'];
+            return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Solicitud confirmada. Responde continuar para buscar opciones disponibles.'];
         }
 
         return $this->showSummary($flightRequest);
@@ -431,7 +416,7 @@ class WhatsAppChatbotService
             'status' => 'searched',
         ]);
 
-        return ['state' => 'SHOW_RESULTS', 'message' => 'Encontramos opciones compatibles con tu solicitud.'];
+        return ['state' => 'SHOW_RESULTS', 'message' => 'Encontramos opciones compatibles con tu solicitud. Responde continuar para verlas.'];
     }
 
     /**
@@ -444,7 +429,7 @@ class WhatsAppChatbotService
         if ($results->isEmpty()) {
             return [
                 'state' => 'SEARCH_FLIGHTS',
-                'message' => 'Buscaré nuevas opciones disponibles para tu ruta.',
+                'message' => 'Responde continuar para buscar nuevas opciones disponibles para tu ruta.',
             ];
         }
 
@@ -455,7 +440,7 @@ class WhatsAppChatbotService
                 (string) ($result['aircraft_name'] ?? 'Aeronave disponible'),
                 isset($result['capacity']) ? $result['capacity'].' pasajeros' : null,
                 isset($result['display_time']) ? 'Tiempo: '.$result['display_time'] : null,
-                isset($result['total']) ? 'Precio: '.$this->money($result['total'], (string) ($result['currency'] ?? 'USD')) : null,
+                isset($result['total']) ? 'Precio: '.$this->money($result['total'], (string) ($result['currency'] ?? 'Moneda no especificada')) : null,
             ])))
             ->implode("\n\n");
 
@@ -481,7 +466,7 @@ class WhatsAppChatbotService
         $aircraftId = (int) ($selected['aircraft_id'] ?? 0);
 
         if ($aircraftId <= 0) {
-            return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Esa opción no tiene identificador válido. Buscaré opciones actualizadas.'];
+            return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Esa opción no tiene identificador válido. Responde continuar para buscar opciones actualizadas.'];
         }
 
         try {
@@ -507,7 +492,7 @@ class WhatsAppChatbotService
 
             return [
                 'state' => 'SHOW_RESULTS',
-                'message' => 'Esa aeronave ya no se encuentra disponible. Te muestro alternativas actualizadas.',
+                'message' => 'Esa aeronave ya no se encuentra disponible. Responde continuar para ver alternativas actualizadas.',
             ];
         }
 
@@ -520,7 +505,7 @@ class WhatsAppChatbotService
             'status' => 'aircraft_selected',
         ]);
 
-        return ['state' => 'CREATE_QUOTE', 'message' => 'Prepararemos tu cotizacion con la aeronave seleccionada.'];
+        return ['state' => 'CREATE_QUOTE', 'message' => 'Responde continuar para preparar tu cotización con la aeronave seleccionada.'];
     }
 
     /**

@@ -213,7 +213,7 @@ class WhatsAppIdempotencyTest extends TestCase
         Http::assertSentCount(1);
     }
 
-    public function test_automated_stages_resume_without_repeating_search_or_either_reply(): void
+    public function test_each_automated_stage_requires_a_new_message_and_retries_do_not_repeat_it(): void
     {
         config(['flight_api.base_url' => 'https://backend.test', 'flight_api.retry_times' => 0]);
         Http::preventStrayRequests();
@@ -239,14 +239,87 @@ class WhatsAppIdempotencyTest extends TestCase
             }
         });
 
-        $this->webhook()->assertInternalServerError();
         $this->webhook()->assertOk();
         $this->webhook()->assertOk();
+        $this->assertSame('SHOW_RESULTS', $conversation->refresh()->state);
+        Http::assertSentCount(2);
 
-        $this->assertDatabaseCount('whats_app_messages', 3);
+        $next = ['messages' => [[...$this->incomingMessage(), 'id' => 'in.options']]];
+        $this->webhook($next)->assertInternalServerError();
+        $this->webhook($next)->assertOk();
+        $this->webhook($next)->assertOk();
+
+        $this->assertDatabaseCount('whats_app_messages', 4);
         $this->assertSame('SELECT_AIRCRAFT', $conversation->refresh()->state);
         $this->assertNull($conversation->flightRequest->selected_aircraft_id);
         Http::assertSentCount(3);
+    }
+
+    #[TestWith(['Guadalajara', 'Mérida'])]
+    #[TestWith(['MMTO', 'MMUN'])]
+    #[TestWith(['Monterrey', 'Los Cabos'])]
+    #[TestWith(['Madrid', 'KTEB'])]
+    public function test_routes_use_real_answers_and_duplicates_never_fill_the_next_field(string $origin, string $destination): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()
+            ->push(['messages' => [['id' => 'out.origin']]])
+            ->push(['messages' => [['id' => 'out.destination']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_ORIGIN']);
+        $originMessage = ['messages' => [[...$this->incomingMessage(), 'id' => 'in.origin', 'text' => ['body' => '  '.$origin.'  ']]]];
+        $destinationMessage = ['messages' => [[...$this->incomingMessage(), 'id' => 'in.destination', 'text' => ['body' => $destination]]]];
+
+        $this->webhook($originMessage)->assertOk();
+        $this->webhook($originMessage)->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame($origin, $flight->origin);
+        $this->assertNull($flight->destination);
+        $this->assertSame('ASK_DESTINATION', $conversation->refresh()->state);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.origin', 'body' => '¿Cuál es el destino?']);
+
+        $this->webhook($destinationMessage)->assertOk();
+        $this->webhook($originMessage)->assertOk();
+        $this->webhook($destinationMessage)->assertOk();
+
+        $this->assertSame($destination, $flight->refresh()->destination);
+        $this->assertNull($flight->departure_date);
+        $this->assertSame('ASK_DEPARTURE_DATE', $conversation->refresh()->state);
+        $this->assertDatabaseCount('whats_app_flight_requests', 1);
+        $this->assertDatabaseCount('whats_app_messages', 4);
+        $this->assertSame(0, $conversation->messages()->where('direction', 'inbound')->whereNull('processed_at')->count());
+        Http::assertSentCount(2);
+    }
+
+    public function test_rejected_origin_reply_resumes_without_using_origin_as_destination(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::sequence()
+            ->push(['error' => ['message' => 'Rejected']], 400)
+            ->push(['messages' => [['id' => 'out.origin']]])]);
+        $conversation = WhatsAppConversation::factory()
+            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
+            ->create(['state' => 'ASK_ORIGIN']);
+        $message = ['messages' => [[...$this->incomingMessage(), 'text' => ['body' => 'Guadalajara']]]];
+
+        $this->webhook($message)->assertInternalServerError();
+
+        $inbound = WhatsAppMessage::query()->where('message_id', 'in.once')->sole();
+        $this->assertNull($inbound->processed_at);
+        $this->assertSame('ASK_ORIGIN', $inbound->processing_context['state_before']);
+        $this->assertSame('ASK_DESTINATION', $conversation->refresh()->state);
+
+        $this->webhook($message)->assertOk();
+        $this->webhook($message)->assertOk();
+
+        $flight = $conversation->flightRequest()->sole();
+        $this->assertSame('Guadalajara', $flight->origin);
+        $this->assertNull($flight->destination);
+        $this->assertNotNull($inbound->refresh()->processed_at);
+        $this->assertDatabaseCount('whats_app_messages', 2);
+        Http::assertSentCount(2);
     }
 
     /** @param array<string, mixed>|null $value */
