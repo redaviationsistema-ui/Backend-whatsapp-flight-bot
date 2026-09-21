@@ -17,19 +17,14 @@ class WhatsAppChatbotService
         'ASK_DESTINATION' => ['field' => 'destination', 'label' => 'Destino', 'prompt' => '¿Cuál es el destino?', 'type' => 'location'],
         'ASK_DEPARTURE_DATE' => ['field' => 'departure_date', 'label' => 'Fecha de salida', 'prompt' => '¿Qué día quieres salir?', 'type' => 'date'],
         'ASK_DEPARTURE_TIME' => ['field' => 'departure_time', 'label' => 'Hora de salida', 'prompt' => '¿A qué hora te gustaría salir?', 'type' => 'time'],
-        'ASK_TIME_FLEXIBILITY' => ['field' => 'is_time_flexible', 'label' => 'Horario flexible', 'prompt' => '¿Tu horario es flexible? Sí o no.', 'type' => 'boolean'],
-        'ASK_PASSENGERS' => ['field' => 'passengers', 'label' => 'Pasajeros', 'prompt' => '¿Cuántas personas viajan?', 'type' => 'passengers'],
         'ASK_TRIP_TYPE' => ['field' => 'trip_type', 'label' => 'Viaje', 'prompt' => '¿Será sólo ida, ida y vuelta o multidestino?', 'type' => 'trip'],
         'ASK_RETURN_DATE' => ['field' => 'return_date', 'label' => 'Fecha de regreso', 'prompt' => '¿Qué día quieres regresar?', 'type' => 'date'],
         'ASK_RETURN_TIME' => ['field' => 'return_time', 'label' => 'Hora de regreso', 'prompt' => '¿A qué hora te gustaría regresar?', 'type' => 'time'],
         'ASK_LEGS' => ['field' => 'legs', 'label' => 'Tramos adicionales', 'prompt' => '¿Quieres agregar alguna escala o parada adicional?', 'type' => 'legs'],
-        'ASK_LUGGAGE' => ['field' => 'luggage_count', 'label' => 'Cantidad de equipaje', 'prompt' => '¿Cuántas piezas de equipaje llevarán?', 'type' => 'count'],
-        'ASK_LUGGAGE_DESCRIPTION' => ['field' => 'luggage_description', 'label' => 'Equipaje', 'prompt' => '¿Cómo es el equipaje?', 'type' => 'text'],
-        'ASK_SPECIAL_LUGGAGE' => ['field' => 'special_luggage', 'label' => 'Equipaje especial', 'prompt' => '¿Llevas equipaje especial?', 'type' => 'text'],
-        'ASK_PETS' => ['field' => 'has_pets', 'label' => 'Mascotas', 'prompt' => '¿Viajan mascotas?', 'type' => 'pets'],
+        'ASK_PASSENGERS' => ['field' => 'passengers', 'label' => 'Pasajeros', 'prompt' => '¿Cuántas personas viajan?', 'type' => 'passengers'],
         'ASK_AIRCRAFT_PREFERENCE' => ['field' => 'aircraft_preference', 'label' => 'Aeronave', 'prompt' => '¿Tienes preferencia de aeronave?', 'type' => 'text'],
+        'ASK_TIME_FLEXIBILITY' => ['field' => 'is_time_flexible', 'label' => 'Horario flexible', 'prompt' => '¿Tu horario es flexible? Sí o no.', 'type' => 'boolean'],
         'ASK_ALTERNATE_AIRPORTS' => ['field' => 'allow_alternate_airports', 'label' => 'Aeropuertos alternos', 'prompt' => '¿Aceptas aeropuertos alternos? Sí o no.', 'type' => 'boolean'],
-        'ASK_GROUND_TRANSPORT' => ['field' => 'ground_transport_required', 'label' => 'Transporte terrestre', 'prompt' => '¿Requieres transporte terrestre? Sí o no.', 'type' => 'boolean'],
         'ASK_OTHER_SERVICES' => ['field' => 'other_services', 'label' => 'Otros servicios', 'prompt' => '¿Necesitas otros servicios o escalas técnicas?', 'type' => 'text'],
         'ASK_NAME' => ['field' => 'client_name', 'label' => 'Nombre', 'prompt' => '¿Cuál es tu nombre completo?', 'type' => 'text'],
         'ASK_EMAIL' => ['field' => 'client_email', 'label' => 'Correo', 'prompt' => '¿Cuál es tu correo electrónico?', 'type' => 'email'],
@@ -53,6 +48,9 @@ class WhatsAppChatbotService
         if ($conversation->state === 'TRANSFER_TO_HUMAN') {
             return ['state' => 'TRANSFER_TO_HUMAN', 'message' => ''];
         }
+        if ($outOfScopeFollowUp = $this->handleOutOfScopeFollowUp($conversation, $normalized)) {
+            return $outOfScopeFollowUp;
+        }
         if ($this->wantsNewQuote($normalized)) {
             $flightRequest = $this->conversationService->resetFlightRequest($conversation);
             $conversation->update(['metadata' => null]);
@@ -72,6 +70,8 @@ class WhatsAppChatbotService
             return $this->help($conversation, $flightRequest);
         }
         if ($this->isUnsupportedIntent($normalized)) {
+            $conversation->update(['metadata' => [...($conversation->metadata ?? []), 'last_bot_intent' => 'unsupported_offer']]);
+
             return [
                 'state' => $conversation->state === 'START' ? 'START' : $conversation->state,
                 'message' => 'Gracias por escribirnos. Este canal está enfocado exclusivamente en renta y cotización de vuelos privados. Si deseas cotizar un vuelo, con gusto te ayudo.',
@@ -109,6 +109,30 @@ class WhatsAppChatbotService
             'CANCELLED' => ['state' => 'CANCELLED', 'message' => 'Esta solicitud fue cancelada.'],
             default => $this->question('ASK_ORIGIN'),
         };
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function handleOutOfScopeFollowUp(WhatsAppConversation $conversation, string $message): ?array
+    {
+        if ((($conversation->metadata ?? [])['last_bot_intent'] ?? null) !== 'unsupported_offer') {
+            return null;
+        }
+
+        if ($this->isAffirmative($message)) {
+            $this->conversationService->resetFlightRequest($conversation);
+            $conversation->update(['metadata' => null]);
+
+            return ['state' => 'ASK_ORIGIN', 'message' => 'Perfecto. ¿Desde qué ciudad o aeropuerto deseas salir?'];
+        }
+
+        if ($this->isNegative($message) || preg_match('/\b(?:no gracias|no quiero volar|no necesito un vuelo|no estoy buscando renta|no busco renta)\b/', $message) === 1) {
+            $this->conversationService->resetFlightRequest($conversation);
+            $conversation->update(['metadata' => null]);
+
+            return ['state' => 'START', 'message' => 'Entendido. Si más adelante necesitas cotizar un vuelo privado, aquí estaremos para ayudarte.'];
+        }
+
+        return null;
     }
 
     private function wantsHuman(string $message): bool
@@ -298,9 +322,6 @@ class WhatsAppChatbotService
             'ASK_DEPARTURE_DATE' => $flightRequest->origin && $flightRequest->destination
                 ? "Perfecto, {$flightRequest->origin} → {$flightRequest->destination}. ¿Para qué día tienes pensado viajar?"
                 : self::QUESTIONS[$state]['prompt'],
-            'ASK_LUGGAGE' => $flightRequest->passengers
-                ? "Perfecto, serían {$flightRequest->passengers} pasajeros. ¿Llevarán equipaje?"
-                : self::QUESTIONS[$state]['prompt'],
             default => self::QUESTIONS[$state]['prompt'],
         };
     }
@@ -317,9 +338,7 @@ class WhatsAppChatbotService
             'date' => 'Puedes decir mañana, el próximo viernes o 2026-10-02.',
             'time' => 'Puedes decirme algo como 8 de la noche, 8 pm o 20:00.',
             'passengers' => 'Puedes decir 4, somos 4 o cuatro pasajeros.',
-            'count' => 'Puedes decir 2, ninguno o no.',
             'boolean' => 'Responde sí o no.',
-            'pets' => 'Puedes decir no, o sí y agregar detalles.',
             'trip' => 'Puedes decir sólo ida, ida y vuelta o multidestino.',
             'legs' => $this->legHelp($conversation, $flightRequest),
             'email' => 'Escribe tu correo, por ejemplo nombre@correo.com.',
@@ -355,12 +374,6 @@ class WhatsAppChatbotService
 
                 return $this->continueFromMissing($conversation, $flightRequest, 'Perfecto, actualicé los pasajeros.');
             }
-        }
-
-        if (str_contains($normalized, 'sin mascotas')) {
-            $flightRequest->update(['has_pets' => false, 'pets_description' => null]);
-
-            return $this->continueFromMissing($conversation, $flightRequest, 'Perfecto, lo dejo sin mascotas.');
         }
 
         if (preg_match('/(?:cambialo|cambia|cambiar|mejor|era)\s+(?:para\s+)?(.+)/', $normalized, $match)) {
@@ -447,7 +460,7 @@ class WhatsAppChatbotService
             'date' => $parsedDate?->toDateString(),
             'time' => $this->parseTime($message),
             'passengers', 'count' => $this->parseCount($normalized, $question['type'] === 'count'),
-            'boolean', 'pets' => $this->parseBoolean($normalized, $question['type'] === 'pets'),
+            'boolean' => $this->parseBoolean($normalized),
             'email' => filter_var($this->extractEmail($message) ?? $message, FILTER_VALIDATE_EMAIL) ?: null,
             'trip' => $this->parseTripType($normalized),
             'money' => $this->parseMoney($normalized),
@@ -485,9 +498,6 @@ class WhatsAppChatbotService
             $value = null;
         }
         $attributes = [$field => $value];
-        if ($field === 'has_pets') {
-            $attributes['pets_description'] = $value ? $message : null;
-        }
         if ($field === 'trip_type') {
             $attributes += ['return_date' => null, 'return_time' => null, 'legs' => null];
         }
@@ -497,9 +507,9 @@ class WhatsAppChatbotService
             'ASK_TRIP_TYPE' => match ($value) {
                 'ROUND_TRIP' => 'ASK_RETURN_DATE',
                 'MULTI_CITY' => 'ASK_LEGS',
-                default => 'ASK_LUGGAGE',
+                default => 'ASK_PASSENGERS',
             },
-            'ASK_RETURN_TIME' => 'ASK_LUGGAGE',
+            'ASK_RETURN_TIME' => 'ASK_PASSENGERS',
             default => array_keys(self::QUESTIONS)[array_search($state, array_keys(self::QUESTIONS), true) + 1] ?? 'SHOW_SUMMARY',
         };
 
@@ -696,12 +706,12 @@ class WhatsAppChatbotService
             unset($metadata['leg_capture']);
             $conversation->update(['metadata' => $metadata]);
 
-            return $this->advance($conversation, $flightRequest, 'ASK_LUGGAGE');
+            return $this->continueFromMissing($conversation, $flightRequest);
         }
 
         if (! $capture) {
             if ($this->isNegative($normalized)) {
-                return $this->advance($conversation, $flightRequest, 'ASK_LUGGAGE');
+                return $this->continueFromMissing($conversation, $flightRequest);
             }
             if ($this->isAffirmative($normalized)) {
                 $metadata['leg_capture'] = ['step' => 'destination', 'draft' => []];
@@ -803,13 +813,11 @@ class WhatsAppChatbotService
             '4', 'hora' => $flightRequest->trip_type === 'ROUND_TRIP' ? ['ASK_DEPARTURE_TIME', 'ASK_RETURN_TIME'] : ['ASK_DEPARTURE_TIME'],
             '5', 'pasajeros' => ['ASK_PASSENGERS'],
             '6', 'viaje' => ['ASK_TRIP_TYPE'],
-            '7', 'equipaje' => ['ASK_LUGGAGE', 'ASK_LUGGAGE_DESCRIPTION', 'ASK_SPECIAL_LUGGAGE'],
-            '8', 'mascotas' => ['ASK_PETS'],
-            '9', 'aeronave' => ['ASK_AIRCRAFT_PREFERENCE'],
-            '10', 'datos personales' => ['ASK_NAME', 'ASK_EMAIL', 'ASK_COMPANY'],
-            '11', 'servicios' => ['ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS', 'ASK_GROUND_TRANSPORT', 'ASK_OTHER_SERVICES'],
-            '12', 'observaciones' => ['ASK_NOTES'],
-            '13', 'presupuesto' => ['ASK_BUDGET'],
+            '7', 'aeronave' => ['ASK_AIRCRAFT_PREFERENCE'],
+            '8', 'servicios' => ['ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS', 'ASK_OTHER_SERVICES'],
+            '9', 'datos personales' => ['ASK_NAME', 'ASK_EMAIL', 'ASK_COMPANY'],
+            '10', 'presupuesto' => ['ASK_BUDGET'],
+            '11', 'observaciones' => ['ASK_NOTES'],
             default => [],
         };
         if ($steps === []) {
@@ -824,7 +832,7 @@ class WhatsAppChatbotService
     /** @return array{state:string,message:string} */
     private function editMenu(): array
     {
-        return ['state' => 'EDIT_FIELD', 'message' => "¿Qué deseas modificar?\n1. Origen\n2. Destino\n3. Fecha\n4. Hora\n5. Pasajeros\n6. Viaje (incluye regreso/tramos)\n7. Equipaje\n8. Mascotas\n9. Aeronave\n10. Datos personales\n11. Servicios y flexibilidad\n12. Observaciones\n13. Presupuesto"];
+        return ['state' => 'EDIT_FIELD', 'message' => "¿Qué deseas modificar?\n1. Origen\n2. Destino\n3. Fecha\n4. Hora\n5. Pasajeros\n6. Viaje (incluye regreso/tramos)\n7. Aeronave\n8. Servicios y flexibilidad\n9. Datos personales\n10. Presupuesto\n11. Observaciones"];
     }
 
     /** @return array{state:string,message:string} */
@@ -856,7 +864,7 @@ class WhatsAppChatbotService
     private function invalidState(WhatsAppFlightRequest $flightRequest): ?string
     {
         foreach (self::QUESTIONS as $state => $question) {
-            if (in_array($question['field'], ['company', 'budget', 'legs', 'return_date', 'return_time', 'luggage_description', 'special_luggage', 'aircraft_preference', 'other_services', 'notes'], true)) {
+            if (in_array($question['field'], ['company', 'budget', 'legs', 'return_date', 'return_time', 'aircraft_preference', 'other_services', 'notes'], true)) {
                 continue;
             }
             if ($flightRequest->{$question['field']} === null || $flightRequest->{$question['field']} === '') {
@@ -928,26 +936,11 @@ class WhatsAppChatbotService
         if ($flightRequest->passengers) {
             $lines[] = '👥 '.$flightRequest->passengers.' pasajeros';
         }
-        if ($flightRequest->luggage_count !== null) {
-            $lines[] = '🧳 '.$flightRequest->luggage_count.' piezas de equipaje';
-        }
-        if ($flightRequest->luggage_description) {
-            $lines[] = '🧳 '.Str::limit($flightRequest->luggage_description, 100);
-        }
-        if ($flightRequest->special_luggage) {
-            $lines[] = '🎒 Equipaje especial: '.Str::limit($flightRequest->special_luggage, 100);
-        }
-        if ($flightRequest->has_pets !== null) {
-            $lines[] = '🐾 '.($flightRequest->has_pets ? Str::limit((string) ($flightRequest->pets_description ?: 'Viajan mascotas'), 80) : 'Sin mascotas');
-        }
         if ($flightRequest->aircraft_preference) {
             $lines[] = '🛩️ Preferencia de aeronave: '.Str::limit($flightRequest->aircraft_preference, 100);
         }
         if ($flightRequest->is_time_flexible !== null) {
             $lines[] = '🕐 '.($flightRequest->is_time_flexible ? 'Horario flexible' : 'Horario fijo');
-        }
-        if ($flightRequest->ground_transport_required !== null) {
-            $lines[] = '🚘 Transporte terrestre: '.$this->yesNo($flightRequest->ground_transport_required);
         }
         if ($flightRequest->other_services) {
             $lines[] = '➕ Otros servicios: '.Str::limit($flightRequest->other_services, 120);
@@ -1123,7 +1116,7 @@ class WhatsAppChatbotService
             'location' => 'No alcancé a identificar una ciudad o aeropuerto. ¿Me lo compartes nuevamente?',
             'passengers' => 'Necesito cuántas personas viajan.',
             'count' => 'Necesito un número para '.$this->normalize($label).'.',
-            'boolean', 'pets' => 'Necesito una respuesta de sí o no.',
+            'boolean' => 'Necesito una respuesta de sí o no.',
             'email' => 'Ese correo no parece válido.',
             'trip' => 'Necesito saber si es sólo ida, ida y vuelta o multidestino.',
             'money' => "No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.",

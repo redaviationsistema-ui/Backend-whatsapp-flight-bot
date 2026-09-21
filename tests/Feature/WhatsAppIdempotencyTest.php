@@ -454,7 +454,7 @@ class WhatsAppIdempotencyTest extends TestCase
 
         $flight = $conversation->flightRequest()->sole();
         $this->assertSame(5, $flight->refresh()->passengers);
-        $this->assertSame('ASK_TRIP_TYPE', $conversation->refresh()->state);
+        $this->assertSame('ASK_AIRCRAFT_PREFERENCE', $conversation->refresh()->state);
     }
 
     public function test_natural_time_answer_is_accepted(): void
@@ -475,7 +475,7 @@ class WhatsAppIdempotencyTest extends TestCase
 
         $flight = $conversation->flightRequest()->sole();
         $this->assertSame('14:00:00', $flight->departure_time);
-        $this->assertSame('ASK_TIME_FLEXIBILITY', $conversation->refresh()->state);
+        $this->assertSame('ASK_TRIP_TYPE', $conversation->refresh()->state);
     }
 
     public function test_multicity_legs_are_captured_one_question_at_a_time(): void
@@ -487,7 +487,7 @@ class WhatsAppIdempotencyTest extends TestCase
             ->push(['messages' => [['id' => 'out.leg-date']]])
             ->push(['messages' => [['id' => 'out.leg-time']]])
             ->push(['messages' => [['id' => 'out.leg-next']]])
-            ->push(['messages' => [['id' => 'out.luggage']]])]);
+            ->push(['messages' => [['id' => 'out.aircraft']]])]);
         $conversation = WhatsAppConversation::factory()
             ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
             ->create(['state' => 'ASK_LEGS']);
@@ -497,6 +497,7 @@ class WhatsAppIdempotencyTest extends TestCase
             'departure_date' => '2026-10-02',
             'departure_time' => '09:00:00',
             'trip_type' => 'MULTI_CITY',
+            'passengers' => 4,
         ]);
 
         $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.leg-yes', 'text' => ['body' => 'sí']]]])->assertOk();
@@ -512,7 +513,7 @@ class WhatsAppIdempotencyTest extends TestCase
             'departure_date' => '2026-10-03',
             'departure_time' => '14:00:00',
         ]], $flight->refresh()->legs);
-        $this->assertSame('ASK_LUGGAGE', $conversation->refresh()->state);
+        $this->assertSame('ASK_AIRCRAFT_PREFERENCE', $conversation->refresh()->state);
         $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.leg-destination', 'body' => 'Claro. ¿Cuál sería el siguiente destino?']);
         $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.leg-date', 'body' => 'Perfecto, hacia Mérida. ¿Para qué día sería ese tramo?']);
         $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.leg-time', 'body' => '¿A qué hora aproximadamente?']);
@@ -634,8 +635,8 @@ class WhatsAppIdempotencyTest extends TestCase
         $flight = $conversation->flightRequest()->sole()->refresh();
         $this->assertSame(6, $flight->passengers);
         $this->assertSame('Cancún', $flight->destination);
-        $this->assertFalse($flight->has_pets);
-        $this->assertNull($flight->pets_description);
+        $this->assertTrue($flight->has_pets);
+        $this->assertSame('perro pequeño', $flight->pets_description);
         $this->assertSame('2026-09-22', $flight->departure_date->toDateString());
         $this->assertNotSame('ASK_ORIGIN', $conversation->refresh()->state);
     }
@@ -734,17 +735,17 @@ class WhatsAppIdempotencyTest extends TestCase
     public function test_natural_boolean_answer_is_normalized_before_update(): void
     {
         Http::preventStrayRequests();
-        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.ground-transport']]])]);
+        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.time-flexibility']]])]);
         $conversation = WhatsAppConversation::factory()
             ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
-            ->create(['state' => 'ASK_GROUND_TRANSPORT']);
-        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['ground_transport_required' => null]);
+            ->create(['state' => 'ASK_TIME_FLEXIBILITY']);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['is_time_flexible' => null]);
 
-        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.ground-transport', 'text' => ['body' => 'por el momento no']]]])->assertOk();
+        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.time-flexibility', 'text' => ['body' => 'por el momento no']]]])->assertOk();
 
         $flight = $conversation->flightRequest()->sole();
-        $this->assertSame('ASK_OTHER_SERVICES', $conversation->refresh()->state);
-        $this->assertFalse($flight->refresh()->ground_transport_required);
+        $this->assertSame('ASK_ALTERNATE_AIRPORTS', $conversation->refresh()->state);
+        $this->assertFalse($flight->refresh()->is_time_flexible);
     }
 
     public function test_invalid_email_keeps_state_without_update(): void
