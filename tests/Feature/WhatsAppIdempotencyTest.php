@@ -454,7 +454,7 @@ class WhatsAppIdempotencyTest extends TestCase
 
         $flight = $conversation->flightRequest()->sole();
         $this->assertSame(5, $flight->refresh()->passengers);
-        $this->assertSame('ASK_AIRCRAFT_PREFERENCE', $conversation->refresh()->state);
+        $this->assertSame('ASK_TRIP_TYPE', $conversation->refresh()->state);
     }
 
     public function test_natural_time_answer_is_accepted(): void

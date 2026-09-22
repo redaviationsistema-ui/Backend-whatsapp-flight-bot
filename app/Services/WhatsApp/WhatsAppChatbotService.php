@@ -88,6 +88,9 @@ class WhatsAppChatbotService
                 'message' => 'Gracias por escribirnos. Este canal está enfocado exclusivamente en renta y cotización de vuelos privados. Si deseas cotizar un vuelo, con gusto te ayudo.',
             ];
         }
+        if ($interpretation = $this->interpretMessage($conversation, $flightRequest, $message, $normalized)) {
+            return $interpretation;
+        }
         if ($directCorrection = $this->directCorrection($conversation, $flightRequest, $message, $normalized)) {
             return $directCorrection;
         }
@@ -147,6 +150,249 @@ class WhatsAppChatbotService
         }
 
         return null;
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretMessage(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        if ($this->startsQuoteIntent($normalized) && ! $this->messageHasLocationSignal($normalized)) {
+            return $this->continueFromMissing($conversation, $flightRequest);
+        }
+
+        if ($route = $this->confirmPendingRoute($conversation, $flightRequest, $message, $normalized)) {
+            return $route;
+        }
+
+        if ($route = $this->interpretOriginWithAlternate($conversation, $flightRequest, $message)) {
+            return $route;
+        }
+
+        if ($route = $this->interpretUncertainStopover($conversation, $flightRequest, $message)) {
+            return $route;
+        }
+
+        if ($returnTrip = $this->interpretReturnTripSignal($conversation, $flightRequest, $message, $normalized)) {
+            return $returnTrip;
+        }
+
+        if ($timeRange = $this->interpretDepartureDateWithTimeRange($conversation, $flightRequest, $message)) {
+            return $timeRange;
+        }
+
+        if ($time = $this->interpretTimeCorrection($conversation, $flightRequest, $message, $normalized)) {
+            return $time;
+        }
+
+        if ($passengers = $this->interpretPassengerTotal($conversation, $flightRequest, $normalized)) {
+            return $passengers;
+        }
+
+        return null;
+    }
+
+    private function messageHasLocationSignal(string $message): bool
+    {
+        return preg_match('/\b(?:desde|salgo de|salimos de|saliendo de|saldria de|saldríamos de|de\s+[\pL .]{2,60}\s+a|voy a|vamos a|hacia|para)\b/u', $message) === 1;
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function confirmPendingRoute(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        $metadata = $conversation->metadata ?? [];
+        $pending = $metadata['pending_route_confirmation'] ?? null;
+        if (! is_array($pending)) {
+            return null;
+        }
+
+        $route = $this->extractRouteSequence($message);
+        $confirmsRoute = $this->isAffirmative(Str::before($normalized, ','))
+            || (count($route) >= 2
+                && $this->normalize((string) ($pending['stop'] ?? '')) === $this->normalize($route[0])
+                && $this->normalize((string) ($pending['destination'] ?? '')) === $this->normalize($route[1]));
+
+        if (! $confirmsRoute) {
+            unset($metadata['pending_route_confirmation']);
+            $conversation->update(['metadata' => $metadata]);
+
+            return null;
+        }
+
+        unset($metadata['pending_route_confirmation']);
+        $conversation->update(['metadata' => $metadata]);
+        $flightRequest->update([
+            'origin' => $pending['origin'],
+            'destination' => $pending['stop'],
+            'trip_type' => 'MULTI_CITY',
+            'legs' => [[
+                'origin' => $pending['stop'],
+                'destination' => $pending['destination'],
+                'departure_date' => null,
+                'departure_time' => null,
+            ]],
+        ]);
+
+        return $this->continueFromMissing(
+            $conversation,
+            $flightRequest->refresh(),
+            "Perfecto, entonces será {$pending['origin']} → {$pending['stop']} → {$pending['destination']}."
+        );
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretOriginWithAlternate(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message): ?array
+    {
+        if (! preg_match('/(?:saldr(?:i|í)amos de|salimos de|salgo de|saliendo de|desde)\s+([^,.;]+).*?(?:tambien|también|podria|podría|alternativa).*?(?:desde|de)\s+([^,.;]+?)(?:\s+si\b|$)/iu', $message, $match)) {
+            return null;
+        }
+
+        $origin = $this->normalizeLocationValue($match[1]);
+        $alternate = $this->normalizeLocationValue($match[2]);
+        if (! $this->isPlausibleLocation($origin) || ! $this->isPlausibleLocation($alternate)) {
+            return null;
+        }
+
+        $flightRequest->update(['origin' => $origin]);
+
+        return $this->continueFromMissing(
+            $conversation,
+            $flightRequest->refresh(),
+            "Perfecto, tomo {$origin} como salida principal. También podemos considerar {$alternate} como alternativa."
+        );
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretUncertainStopover(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message): ?array
+    {
+        if (! $flightRequest->origin || ! preg_match('/(?:ir|volar|llegar)\s+a\s+([^,.;]+?),?\s+pero\s+antes\s+(?:posiblemente|quizas|quizá|tal vez)?\s*(?:pasar por|hacer escala en|parar en)\s+([^,.;]+)/iu', $message, $match)) {
+            return null;
+        }
+
+        $destination = $this->normalizeLocationValue($match[1]);
+        $stop = $this->normalizeLocationValue($match[2]);
+        if (! $this->isPlausibleLocation($destination) || ! $this->isPlausibleLocation($stop)) {
+            return null;
+        }
+
+        $conversation->update(['metadata' => [
+            ...($conversation->metadata ?? []),
+            'pending_route_confirmation' => [
+                'origin' => $flightRequest->origin,
+                'stop' => $stop,
+                'destination' => $destination,
+            ],
+        ]]);
+
+        return [
+            'state' => $conversation->state,
+            'message' => "Entiendo. ¿Quieres hacer la ruta {$flightRequest->origin} → {$stop} → {$destination}?",
+        ];
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretReturnTripSignal(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        if (! preg_match('/\b(?:regresar|regreso|volver|vuelta)\b/u', $normalized)) {
+            return null;
+        }
+        if ($flightRequest->trip_type === 'ONE_WAY') {
+            return null;
+        }
+
+        $date = $this->parseDate($this->extractDatePhrase($message) ?? $message, $flightRequest->departure_date);
+        if (! $date) {
+            return $this->question('ASK_RETURN_DATE', 'Perfecto, entonces será ida y vuelta. ¿Qué día quieres regresar?', $flightRequest);
+        }
+        if ($flightRequest->departure_date && $date->lt($flightRequest->departure_date)) {
+            return $this->question('ASK_RETURN_DATE', 'El regreso no puede ser antes de la salida. ¿Qué otra fecha tienes en mente?', $flightRequest);
+        }
+
+        $time = $this->parseTime($this->extractTimePhrase($message) ?? $message);
+        $flightRequest->update([
+            'trip_type' => 'ROUND_TRIP',
+            'return_date' => $date->toDateString(),
+            'return_time' => $time,
+            'legs' => null,
+        ]);
+
+        return $this->continueFromMissing(
+            $conversation,
+            $flightRequest->refresh(),
+            'Perfecto, entonces también regresarían el '.$this->displayDate($date).'.'
+        );
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretDepartureDateWithTimeRange(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message): ?array
+    {
+        if (! $datePhrase = $this->extractDatePhrase($message)) {
+            return null;
+        }
+        if (! preg_match('/(?:a\s+las?\s+|como\s+a\s+las?\s+)?(\d{1,2})\s+(?:u|o)\s+(\d{1,2})\s+(?:de la\s+)?(manana|mañana|tarde|noche|am|pm)/iu', $message, $match)) {
+            return null;
+        }
+
+        $date = $this->parseDate($datePhrase);
+        if (! $date || $date->lt(Carbon::today(config('whatsapp.timezone')))) {
+            return null;
+        }
+
+        $first = $this->parseTime($match[1].' de la '.$match[3]);
+        $second = $this->parseTime($match[2].' de la '.$match[3]);
+        if (! $first || ! $second) {
+            return null;
+        }
+
+        $flightRequest->update(['departure_date' => $date->toDateString(), 'departure_time' => null]);
+        $conversation->update(['metadata' => [
+            ...($conversation->metadata ?? []),
+            'pending_time_options' => [$first, $second],
+        ]]);
+
+        return [
+            'state' => 'ASK_DEPARTURE_TIME',
+            'message' => 'Perfecto, el '.$this->displayDate($date).'. ¿Prefieres salir a las '.$this->displayTimeForChoice($first).' o a las '.$this->displayTimeForChoice($second).'?',
+        ];
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretTimeCorrection(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        if (! preg_match('/\b(?:mejor|prefiero|dejemos|cambialo a|cámbialo a|cambia a|no mejor)\b/u', $normalized) && $conversation->state !== 'ASK_DEPARTURE_TIME') {
+            return null;
+        }
+
+        $time = $this->parseTime($this->extractTimePhrase($message) ?? $message);
+        if (! $time) {
+            return null;
+        }
+
+        $flightRequest->update(['departure_time' => $time]);
+        $metadata = $conversation->metadata ?? [];
+        unset($metadata['pending_time_options']);
+        $conversation->update(['metadata' => $metadata]);
+
+        return $this->continueFromMissing(
+            $conversation,
+            $flightRequest->refresh(),
+            'Perfecto, dejamos la salida a las '.$this->displayTime($time).'.'
+        );
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretPassengerTotal(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $normalized): ?array
+    {
+        if (! preg_match('/\b(?:somos|viajamos|seremos|seriamos|seríamos|para)\b.*\b(?:adultos?|ni(?:n|ñ)os?|pasajeros?|personas?)\b/u', $normalized)) {
+            return null;
+        }
+
+        $passengers = $this->parseCount($normalized, false);
+        if ($passengers === false) {
+            return null;
+        }
+
+        $flightRequest->update(['passengers' => $passengers]);
+
+        return $this->continueFromMissing($conversation, $flightRequest->refresh(), 'Perfecto, actualicé los pasajeros.');
     }
 
     private function wantsHuman(string $message): bool
@@ -842,7 +1088,7 @@ class WhatsAppChatbotService
         if (preg_match('/\b(?:a|hacia|para)\b/u', $normalized) === 1) {
             return false;
         }
-        if (preg_match('/\b(?:interesado|comprar|comprarlo|venta|publicacion|refaccion|refacciones|pieza|piezas|precio|cuesta|avion|lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|tarde|noche|somos|pasajeros|personas)\b/', $normalized) === 1) {
+        if (preg_match('/\b(?:hola|buenas|buenos|tardes|dias|noches|quiero|queremos|si|no|primero|despues|luego|cotizar|vuelo|pero|posiblemente|mejor|saldria|saldriamos|vamos|regresar|interesado|comprar|comprarlo|venta|publicacion|refaccion|refacciones|pieza|piezas|precio|cuesta|avion|lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|tarde|noche|somos|pasajeros|personas)\b/', $normalized) === 1) {
             return false;
         }
 
@@ -1234,6 +1480,11 @@ class WhatsAppChatbotService
         }
 
         return Carbon::createFromFormat('H:i:s', $time, config('whatsapp.timezone'))->format('g:i a');
+    }
+
+    private function displayTimeForChoice(string $time): string
+    {
+        return str_replace(['am', 'pm'], ['a. m.', 'p. m.'], $this->displayTime($time) ?? $time);
     }
 
     private function parseBoolean(string $message, bool $allowDetails = false): ?bool
