@@ -48,8 +48,19 @@ class WhatsAppChatbotService
         if ($conversation->state === 'TRANSFER_TO_HUMAN') {
             return ['state' => 'TRANSFER_TO_HUMAN', 'message' => ''];
         }
+        if ($this->isCancelRequest($normalized)) {
+            $flightRequest->update(['status' => 'cancelled']);
+
+            return ['state' => 'CANCELLED', 'message' => 'Solicitud cancelada. Escribe de nuevo si deseas iniciar otra cotización.'];
+        }
         if ($outOfScopeFollowUp = $this->handleOutOfScopeFollowUp($conversation, $normalized)) {
             return $outOfScopeFollowUp;
+        }
+        if ($this->isQuoteRejection($normalized)) {
+            $this->conversationService->resetFlightRequest($conversation);
+            $conversation->update(['metadata' => null]);
+
+            return ['state' => 'START', 'message' => 'Entendido. Si más adelante necesitas cotizar un vuelo privado, aquí estaremos para ayudarte.'];
         }
         if ($this->wantsNewQuote($normalized)) {
             $flightRequest = $this->conversationService->resetFlightRequest($conversation);
@@ -82,6 +93,9 @@ class WhatsAppChatbotService
         }
         if ($correction = $this->correction($conversation, $flightRequest, $normalized)) {
             return $correction;
+        }
+        if ($contradiction = $this->tripTypeContradiction($flightRequest, $normalized)) {
+            return $contradiction;
         }
         $details = $this->extractFlightDetails($message);
         if (isset($details['origin'], $details['destination'])) {
@@ -138,6 +152,7 @@ class WhatsAppChatbotService
     private function wantsHuman(string $message): bool
     {
         return in_array($message, ['asesor', 'humano', 'agente', 'transferir'], true)
+            || str_contains($message, 'asesor')
             || str_contains($message, 'hablar con alguien')
             || str_contains($message, 'hablar con un asesor')
             || str_contains($message, 'quiero hablar')
@@ -148,10 +163,17 @@ class WhatsAppChatbotService
     private function wantsNewQuote(string $message): bool
     {
         return str_contains($message, 'nueva cotizacion')
+            || str_contains($message, 'empezar de nuevo')
+            || str_contains($message, 'iniciar de nuevo')
             || str_contains($message, 'nuevo vuelo')
             || str_contains($message, 'otra cotizacion')
             || str_contains($message, 'otro vuelo')
             || str_contains($message, 'cotizar otro');
+    }
+
+    private function isCancelRequest(string $message): bool
+    {
+        return in_array($message, ['cancelar', 'cancela', 'cancelar solicitud', 'ya no quiero cotizar'], true);
     }
 
     private function asksForStatus(string $message): bool
@@ -163,6 +185,11 @@ class WhatsAppChatbotService
             || str_contains($message, 'mi cotizacion')
             || str_contains($message, 'mi solicitud')
             || str_contains($message, 'reserva');
+    }
+
+    private function isQuoteRejection(string $message): bool
+    {
+        return in_array($message, ['no quiero volar', 'no necesito un vuelo', 'no estoy buscando renta', 'no busco renta'], true);
     }
 
     private function startsQuoteIntent(string $message): bool
@@ -431,6 +458,19 @@ class WhatsAppChatbotService
             return $this->continueFromMissing($conversation, $flightRequest, 'Perfecto, actualicé el destino.');
         }
 
+        if (preg_match('/(?:salgo de|salimos de|saliendo de|salir de|origen)\s+([^,]+?)(?:,\s*no\s+.+)?$/iu', $message, $match) && preg_match('/\b(?:no|corrige|cambia|cambiar|mejor|era)\b/', $normalized)) {
+            $origin = $this->normalizeLocationValue($match[1]);
+            if (! $this->isPlausibleLocation($origin)) {
+                return $this->question('ASK_ORIGIN', $this->invalidMessage('location', 'Origen'), $flightRequest);
+            }
+            if ($flightRequest->destination && $this->normalize($origin) === $this->normalize($flightRequest->destination)) {
+                return $this->question('ASK_ORIGIN', 'Veo que pusiste el mismo lugar de salida y llegada. ¿Desde qué otro origen te gustaría salir?', $flightRequest);
+            }
+            $flightRequest->update(['origin' => $origin]);
+
+            return $this->continueFromMissing($conversation, $flightRequest, 'Perfecto, actualicé el origen.');
+        }
+
         if (preg_match('/^(?:mejor|era)\s+(.+)/', $message, $match) && ($conversation->state === 'ASK_DESTINATION' || $flightRequest->destination)) {
             $destination = $this->normalizeLocationValue($match[1]);
             if ($flightRequest->origin && $this->normalize($destination) === $this->normalize($flightRequest->origin)) {
@@ -442,6 +482,23 @@ class WhatsAppChatbotService
         }
 
         return null;
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function tripTypeContradiction(WhatsAppFlightRequest $flightRequest, string $message): ?array
+    {
+        if ($flightRequest->trip_type !== 'ONE_WAY' || ! str_contains($message, 'regreso')) {
+            return null;
+        }
+
+        if (! $this->parseDate($this->extractDatePhrase($message) ?? $message, $flightRequest->departure_date)) {
+            return null;
+        }
+
+        return [
+            'state' => 'ASK_TRIP_TYPE',
+            'message' => 'Tenía el viaje como solo ida, pero mencionaste regreso. ¿Será solo ida o ida y vuelta?',
+        ];
     }
 
     /** @return array{state:string,message:string}|null */
@@ -500,6 +557,9 @@ class WhatsAppChatbotService
             'money' => $this->parseMoney($normalized),
             default => $this->cleanTextAnswer($message, $field),
         };
+        if ($question['type'] === 'time' && $value === null && preg_match('/^(?:a las?\s+)?(?:[1-9]|1[0-2])$/', $normalized) === 1) {
+            return $this->question($state, "¿Serían las {$normalized} de la tarde o las {$normalized} de la mañana?", $flightRequest);
+        }
         if (($value === null && $question['type'] !== 'money') || ($value === false && in_array($question['type'], ['passengers', 'count', 'money'], true))) {
             return $this->question($state, $this->invalidMessage($question['type'], $question['label']), $flightRequest);
         }
@@ -526,6 +586,9 @@ class WhatsAppChatbotService
         }
         if ($question['type'] === 'text' && $this->isNegative($normalized)) {
             $value = null;
+        }
+        if ($field === 'client_name' && ! $this->isValidFullName((string) $value)) {
+            return $this->question($state, '¿Me compartes tu nombre completo, por favor?', $flightRequest);
         }
         $attributes = [$field => $value];
         if ($field === 'trip_type') {
@@ -680,6 +743,7 @@ class WhatsAppChatbotService
         $routeText = preg_replace('/\b(?:quiero|necesito|busco|un|una|vuelo|privado|salida es|la salida es|salir|salgo|salimos|saliendo|desde|de|ir|quiero ir)\b/iu', ' ', $message) ?? $message;
         $routeText = preg_replace('/\b(?:voy|vamos)\s+a\b/iu', ' a ', $routeText) ?? $routeText;
         $routeText = preg_replace('/\b(?:luego|despues|después|y despues|y después|termino en|terminar en|para|hacia)\b/iu', ' a ', $routeText) ?? $routeText;
+        $routeText = preg_replace('/\s+y\s+(?=[\pL])/iu', ' a ', $routeText) ?? $routeText;
         $routeText = str_replace(['→', '->', '-', ',', ';'], ' a ', $routeText);
         $parts = preg_split('/\s+\ba\b\s+/iu', $routeText) ?: [];
         $locations = [];
@@ -775,6 +839,9 @@ class WhatsAppChatbotService
         if (preg_match('/\d|[@|]/', $value) === 1) {
             return false;
         }
+        if (preg_match('/\b(?:a|hacia|para)\b/u', $normalized) === 1) {
+            return false;
+        }
         if (preg_match('/\b(?:interesado|comprar|comprarlo|venta|publicacion|refaccion|refacciones|pieza|piezas|precio|cuesta|avion|lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|tarde|noche|somos|pasajeros|personas)\b/', $normalized) === 1) {
             return false;
         }
@@ -799,6 +866,13 @@ class WhatsAppChatbotService
         }
 
         return trim($value, " \t\n\r\0\x0B.,");
+    }
+
+    private function isValidFullName(string $value): bool
+    {
+        $value = trim($value);
+
+        return preg_match('/^[\pL][\pL .\'-]*\s+[\pL][\pL .\'-]*$/u', $value) === 1;
     }
 
     /** @return array{state:string,message:string} */

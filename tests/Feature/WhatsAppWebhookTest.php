@@ -66,6 +66,7 @@ class WhatsAppWebhookTest extends TestCase
             },
             'https://backend.test/api/v1/client/quotes/preview' => Http::sequence()
                 ->push($this->previewResponse())
+                ->push($this->previewResponse())
                 ->push($this->previewResponse()),
             'https://backend.test/api/v1/client/flight-requests' => Http::response([
                 'success' => true,
@@ -78,11 +79,11 @@ class WhatsAppWebhookTest extends TestCase
             ]),
         ]);
 
-        $answers = ['Hola', 'Toluca', 'Cancun', '2026-10-15', '14:30', 'sí', '5', '1', '4', '4 maletas', 'ninguno', 'no', 'sin preferencia', 'sí', 'sí', 'no', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', 'continuar', 'continuar', '1', 'continuar'];
+        $answers = ['Hola', 'Toluca', 'Cancun', '2026-10-15', '14:30', 'solo ida', '5', 'sin preferencia', 'sí', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', 'continuar', 'continuar', '1', 'continuar'];
         foreach ($answers as $index => $answer) {
             $this->process('wamid.'.($index + 1), $answer);
         }
-        $this->process('wamid.25', '1');
+        $this->process('wamid.21', 'continuar');
 
         $conversation = WhatsAppConversation::query()->firstOrFail();
         $flightRequest = WhatsAppFlightRequest::query()->firstOrFail();
@@ -100,7 +101,7 @@ class WhatsAppWebhookTest extends TestCase
         $this->assertSame(4001, $flightRequest->accepted_quote_id);
         $this->assertSame('QUOTE-4001', $flightRequest->quote_reference);
         $this->assertSame('quoted', $flightRequest->status);
-        $this->assertCount(1, WhatsAppMessage::query()->where('message_id', 'wamid.25')->get());
+        $this->assertCount(1, WhatsAppMessage::query()->where('message_id', 'wamid.21')->get());
 
         Http::assertSent(fn ($request): bool => $request->url() === 'https://backend.test/api/v1/client/quotes/preview'
             && $request->hasHeader('Authorization', 'Bearer plain-api-token')
