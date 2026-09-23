@@ -18,7 +18,21 @@ class FlightApiService
      */
     public function searchFlights(WhatsAppFlightRequest $flightRequest): array
     {
-        $response = $this->post('/api/v1/client/quotes/preview', $this->previewPayload($flightRequest));
+        $path = '/api/v1/client/quotes/preview';
+        $payload = $this->previewPayload($flightRequest);
+
+        Log::info('Flight API quote preview request.', [
+            'path' => $path,
+            'flight_request_id' => $flightRequest->id,
+            'has_aircraft_preference' => filled($flightRequest->aircraft_preference),
+            'aircraft_preference_id' => $payload['aircraft_preference_id'] ?? null,
+            'origin' => $payload['origin'] ?? null,
+            'destination' => $payload['destination'] ?? null,
+            'trip_type' => $payload['trip_type'] ?? null,
+            'legs_count' => count($payload['legs'] ?? []),
+        ]);
+
+        $response = $this->post($path, $payload);
         $options = $response['options'] ?? $response['matches'] ?? [];
 
         if (! is_array($options)) {
@@ -63,6 +77,10 @@ class FlightApiService
 
         if ($flightRequest->trip_type === 'ROUND_TRIP') {
             $payload['return_datetime'] = $this->combineDateTime($flightRequest->return_date?->toDateString(), $flightRequest->return_time);
+        }
+
+        if ($flightRequest->selected_aircraft_id) {
+            $payload['aircraft_preference_id'] = $flightRequest->selected_aircraft_id;
         }
 
         $payload['legs'] = $this->legsPayload($flightRequest);
@@ -190,7 +208,7 @@ class FlightApiService
         } catch (ConnectionException $exception) {
             Log::error('Flight API connection failed.', [
                 'path' => $path,
-                'error' => $exception->getMessage(),
+                'error' => $this->sanitizeTechnicalMessage($exception->getMessage()),
             ]);
 
             throw new RuntimeException('Flight API is not reachable.', previous: $exception);
@@ -198,7 +216,9 @@ class FlightApiService
             Log::warning('Flight API request failed.', [
                 'path' => $path,
                 'status' => $exception->response->status(),
-                'response' => $exception->response->json(),
+                'error_code' => $exception->response->json('code'),
+                'message' => $this->sanitizeTechnicalMessage((string) $exception->response->json('message')),
+                'response_status' => $exception->response->json('status'),
             ]);
 
             throw new RuntimeException('Flight API request failed with status '.$exception->response->status(), previous: $exception);
@@ -220,6 +240,15 @@ class FlightApiService
         }
 
         return $json;
+    }
+
+    private function sanitizeTechnicalMessage(string $message): string
+    {
+        $message = preg_replace('#postgres(?:ql)?://[^:\s/@]+:[^@\s]+@#i', 'postgres://[redacted]@', $message) ?? $message;
+        $message = preg_replace('/(password=)[^;\s]+/i', '$1[redacted]', $message) ?? $message;
+        $message = preg_replace('/Bearer\s+[A-Za-z0-9._~+\/=-]+/i', 'Bearer [redacted]', $message) ?? $message;
+
+        return $message;
     }
 
     private function http(): PendingRequest

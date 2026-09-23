@@ -1555,7 +1555,7 @@ class WhatsAppChatbotService
     }
 
     /**
-     * @return array{origin?:string,destination?:string,departure_date?:string,departure_time?:string,passengers?:int,trip_type?:string,legs?:array<int, array{origin:string,destination:string,departure_date:null,departure_time:null}>}
+     * @return array{origin?:string,destination?:string,departure_date?:string,departure_time?:string,passengers?:int,trip_type?:string,legs?:array<int, array{origin:string,destination:string,departure_date:null,departure_time:null}>,is_time_flexible?:bool}
      */
     private function extractFlightDetails(string $message): array
     {
@@ -1632,6 +1632,15 @@ class WhatsAppChatbotService
             $details['trip_type'] = 'ROUND_TRIP';
         } elseif (str_contains($normalized, 'multidestino') || str_contains($normalized, 'multi destino')) {
             $details['trip_type'] = 'MULTI_CITY';
+        }
+
+        if (preg_match('/\b(?:horario|hora|salida)\s+(?:fijo|fija|exacto|exacta)\b/u', $normalized) === 1
+            || preg_match('/\b(?:no|sin)\s+(?:tengo\s+)?(?:horario\s+)?flexibilidad\b/u', $normalized) === 1
+            || preg_match('/\b(?:no|nada)\s+flexible\b/u', $normalized) === 1) {
+            $details['is_time_flexible'] = false;
+        } elseif (preg_match('/\b(?:horario|hora|salida|itinerario)?\s*(?:es|soy|somos|estoy|estamos|puedo|podemos)?\s*flexible(?:s)?\b/u', $normalized) === 1
+            || preg_match('/\b(?:horario|hora|salida)\s+abiert[ao]\b/u', $normalized) === 1) {
+            $details['is_time_flexible'] = true;
         }
 
         return $details;
@@ -2479,6 +2488,15 @@ class WhatsAppChatbotService
 
     private function parseBoolean(string $message, bool $allowDetails = false): ?bool
     {
+        if (preg_match('/\b(?:no|nada)\s+flexible\b/u', $message) === 1
+            || preg_match('/\b(?:horario|hora|salida)\s+(?:fijo|fija|exacto|exacta)\b/u', $message) === 1) {
+            return false;
+        }
+
+        if (preg_match('/\bflexible(?:s)?\b/u', $message) === 1) {
+            return true;
+        }
+
         if ($this->isAffirmative($message) || str_contains($message, 'por favor') || str_contains($message, 'si necesitamos') || ($allowDetails && preg_match('/^si[ ,:]/', $message))) {
             return true;
         }
@@ -2502,7 +2520,7 @@ class WhatsAppChatbotService
 
     private function isNegative(string $message): bool
     {
-        return in_array($message, ['no', 'n', '2', '0', 'ninguno', 'ninguna', 'nada', 'sin', 'omitir', 'terminar', 'ya esta', 'ya está', 'no tengo', 'aun no', 'aún no', 'no se', 'no sé', 'flexible', 'sin presupuesto', 'sin presupuesto definido'], true);
+        return in_array($message, ['no', 'n', '2', '0', 'ninguno', 'ninguna', 'nada', 'sin', 'omitir', 'terminar', 'ya esta', 'ya está', 'no tengo', 'aun no', 'aún no', 'no se', 'no sé', 'sin presupuesto', 'sin presupuesto definido'], true);
     }
 
     private function isFinished(string $message): bool
@@ -2700,7 +2718,15 @@ class WhatsAppChatbotService
         try {
             $results = $this->flightApiService->searchFlights($flightRequest);
         } catch (RuntimeException $exception) {
-            report($exception);
+            Log::error('WhatsApp quote availability lookup failed.', [
+                'flight_request_id' => $flightRequest->id,
+                'conversation_id' => $flightRequest->whats_app_conversation_id,
+                'exception' => $exception::class,
+                'message' => $this->sanitizeTechnicalMessage($exception->getMessage()),
+                'previous_exception' => $exception->getPrevious() ? $exception->getPrevious()::class : null,
+                'previous_message' => $exception->getPrevious() ? $this->sanitizeTechnicalMessage($exception->getPrevious()->getMessage()) : null,
+                'state' => 'SEARCH_FLIGHTS',
+            ]);
 
             return [
                 'state' => 'TRANSFER_TO_HUMAN',
@@ -2726,6 +2752,15 @@ class WhatsAppChatbotService
         ]);
 
         return ['state' => 'SHOW_RESULTS', 'message' => 'Encontramos opciones compatibles con tu solicitud. Responde continuar para verlas.'];
+    }
+
+    private function sanitizeTechnicalMessage(string $message): string
+    {
+        $message = preg_replace('#postgres(?:ql)?://[^:\s/@]+:[^@\s]+@#i', 'postgres://[redacted]@', $message) ?? $message;
+        $message = preg_replace('/(password=)[^;\s]+/i', '$1[redacted]', $message) ?? $message;
+        $message = preg_replace('/Bearer\s+[A-Za-z0-9._~+\/=-]+/i', 'Bearer [redacted]', $message) ?? $message;
+
+        return $message;
     }
 
     /**

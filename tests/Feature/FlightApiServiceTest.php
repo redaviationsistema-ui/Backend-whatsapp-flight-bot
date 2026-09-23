@@ -9,6 +9,8 @@ use App\Services\Flights\FlightApiService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Mockery;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -133,6 +135,33 @@ class FlightApiServiceTest extends TestCase
     public function test_it_throws_for_server_error_backend_response(): void
     {
         $this->assertBackendStatusThrows(500);
+    }
+
+    public function test_it_logs_sanitized_backend_quote_preview_failures(): void
+    {
+        Log::spy();
+        Http::fake([
+            'https://backend.test/api/v1/client/quotes/preview' => Http::response([
+                'status' => 'error',
+                'code' => 'SERVICE_ERROR',
+                'message' => 'SQLSTATE could not connect to postgresql://user:secret@example.supabase.co/db',
+            ], 500),
+        ]);
+
+        try {
+            app(FlightApiService::class)->searchFlights($this->flightRequest());
+            $this->fail('Expected backend failure to throw.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('500', $exception->getMessage());
+        }
+
+        Log::shouldHaveReceived('warning')->with('Flight API request failed.', Mockery::on(
+            fn (array $context): bool => $context['path'] === '/api/v1/client/quotes/preview'
+                && $context['status'] === 500
+                && $context['error_code'] === 'SERVICE_ERROR'
+                && str_contains($context['message'], 'postgres://[redacted]@')
+                && ! str_contains($context['message'], 'secret')
+        ));
     }
 
     public function test_it_throws_for_invalid_json_response(): void

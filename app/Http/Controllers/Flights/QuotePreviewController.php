@@ -7,7 +7,9 @@ use App\Services\Quotes\QuoteDatabaseNotConfiguredException;
 use App\Services\Quotes\QuoteEngine;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use Throwable;
 
 class QuotePreviewController extends Controller
 {
@@ -31,7 +33,13 @@ class QuotePreviewController extends Controller
 
         try {
             return response()->json($quoteEngine->preview($validated));
-        } catch (QuoteDatabaseNotConfiguredException) {
+        } catch (QuoteDatabaseNotConfiguredException $exception) {
+            Log::error('Quote preview failed.', [
+                'stage' => 'quote_db_configuration',
+                'code' => 'QUOTE_DATABASE_NOT_CONFIGURED',
+                'quote_db_configured' => false,
+            ]);
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'QUOTE_DATABASE_NOT_CONFIGURED',
@@ -47,6 +55,20 @@ class QuotePreviewController extends Controller
                 'message' => $message,
                 'options' => [],
             ], 422);
+        } catch (Throwable $exception) {
+            Log::error('Quote preview failed.', [
+                'stage' => 'quote_engine',
+                'exception' => $exception::class,
+                'message' => $this->sanitizeTechnicalMessage($exception->getMessage()),
+                'quote_db_configured' => $this->quoteDatabaseConfigured(),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'code' => 'SERVICE_ERROR',
+                'message' => 'Quote preview failed.',
+                'options' => [],
+            ], 500);
         }
     }
 
@@ -62,5 +84,21 @@ class QuotePreviewController extends Controller
         [$code, $detail] = explode(':', $message, 2);
 
         return [trim($code), trim($detail)];
+    }
+
+    private function quoteDatabaseConfigured(): bool
+    {
+        $config = (array) config('database.connections.quote_db', []);
+
+        return filled($config['url'] ?? null)
+            || (filled($config['database'] ?? null) && filled($config['username'] ?? null));
+    }
+
+    private function sanitizeTechnicalMessage(string $message): string
+    {
+        $message = preg_replace('#postgres(?:ql)?://[^:\s/@]+:[^@\s]+@#i', 'postgres://[redacted]@', $message) ?? $message;
+        $message = preg_replace('/(password=)[^;\s]+/i', '$1[redacted]', $message) ?? $message;
+
+        return $message;
     }
 }
