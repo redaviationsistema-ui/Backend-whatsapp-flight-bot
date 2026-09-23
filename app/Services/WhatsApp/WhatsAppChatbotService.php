@@ -53,6 +53,9 @@ class WhatsAppChatbotService
 
             return ['state' => 'CANCELLED', 'message' => 'Solicitud cancelada. Escribe de nuevo si deseas iniciar otra cotización.'];
         }
+        if ($outOfScopeRoute = $this->handleOutOfScopeRouteFollowUp($conversation, $message)) {
+            return $outOfScopeRoute;
+        }
         if ($outOfScopeFollowUp = $this->handleOutOfScopeFollowUp($conversation, $normalized)) {
             return $outOfScopeFollowUp;
         }
@@ -126,6 +129,24 @@ class WhatsAppChatbotService
             'CANCELLED' => ['state' => 'CANCELLED', 'message' => 'Esta solicitud fue cancelada.'],
             default => $this->question('ASK_ORIGIN'),
         };
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function handleOutOfScopeRouteFollowUp(WhatsAppConversation $conversation, string $message): ?array
+    {
+        if ((($conversation->metadata ?? [])['last_bot_intent'] ?? null) !== 'unsupported_offer') {
+            return null;
+        }
+
+        $details = $this->extractFlightDetails($message);
+        if (! isset($details['origin'], $details['destination'])) {
+            return null;
+        }
+
+        $flightRequest = $this->conversationService->resetFlightRequest($conversation);
+        $conversation->update(['metadata' => null]);
+
+        return $this->applyExtractedDetails($conversation, $flightRequest, $details);
     }
 
     /** @return array{state:string,message:string}|null */
@@ -920,6 +941,11 @@ class WhatsAppChatbotService
         $normalized = $this->normalize($message);
         $details = [];
 
+        if ($route = $this->extractNaturalRoute($message)) {
+            $details['origin'] = $route['origin'];
+            $details['destination'] = $route['destination'];
+        }
+
         $route = $this->extractRouteSequence($message);
         if (count($route) >= 3) {
             $details['origin'] = $route[0];
@@ -984,6 +1010,35 @@ class WhatsAppChatbotService
         }
 
         return $details;
+    }
+
+    /** @return array{origin:string,destination:string}|null */
+    private function extractNaturalRoute(string $message): ?array
+    {
+        $ending = '(?=\s+(?:el|este|esta|para|con|somos|únicamente|unicamente|solo|sólo|como|a las|\d)\b|[.;,]?\s*$)';
+        $patterns = [
+            '/\b(?:la\s+)?salida\s+(?:ser(?:i|í)a|es)?\s+de\s+([\pL .\'-]{2,80}?)\s+(?:a(?!\s+las?\b)|hasta|hacia|para)\s+([\pL .\'-]{2,80}?)'.$ending.'/iu',
+            '/\b(?:saldr(?:i|í)a|salgo|salimos|quiero\s+salir|voy|vamos)\s+de\s+([\pL .\'-]{2,80}?)\s+(?:a(?!\s+las?\b)|hasta|hacia|para)\s+([\pL .\'-]{2,80}?)'.$ending.'/iu',
+            '/\bnecesito\s+(?:un\s+)?vuelo\s+de\s+([\pL .\'-]{2,80}?)\s+(?:a(?!\s+las?\b)|hasta|hacia|para)\s+([\pL .\'-]{2,80}?)'.$ending.'/iu',
+            '/\b(?:quiero\s+)?volar\s+desde\s+([\pL .\'-]{2,80}?)\s+(?:a(?!\s+las?\b)|hasta|hacia|para)\s+([\pL .\'-]{2,80}?)'.$ending.'/iu',
+            '/\bdesde\s+([\pL .\'-]{2,80}?)\s+(?:a(?!\s+las?\b)|hasta|hacia|para)\s+([\pL .\'-]{2,80}?)'.$ending.'/iu',
+            '/\bde\s+([\pL .\'-]{2,80}?)\s+(?:a(?!\s+las?\b)|hasta|hacia|para)\s+([\pL .\'-]{2,80}?)'.$ending.'/iu',
+            '/\b(?:mi\s+)?vuelo\s+(?:ser(?:i|í)a|es)?\s+([\pL .\'-]{2,80}?)\s*(?:-|→|->)\s*([\pL .\'-]{2,80}?)'.$ending.'/iu',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $message, $match) !== 1) {
+                continue;
+            }
+
+            $origin = $this->normalizeLocationValue($match[1]);
+            $destination = $this->normalizeLocationValue($match[2]);
+            if ($this->isPlausibleLocation($origin) && $this->isPlausibleLocation($destination) && $this->normalize($origin) !== $this->normalize($destination)) {
+                return ['origin' => $origin, 'destination' => $destination];
+            }
+        }
+
+        return null;
     }
 
     /** @return array<int, string> */
