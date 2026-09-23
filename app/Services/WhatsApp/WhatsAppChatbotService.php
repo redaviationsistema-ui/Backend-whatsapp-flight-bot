@@ -79,8 +79,20 @@ class WhatsAppChatbotService
         if ($parsed['asks_status']) {
             return $this->quoteStatus($conversation, $flightRequest);
         }
+        if ($this->asksForCurrentRequest($normalized)) {
+            return $this->showCurrentRequest($conversation, $flightRequest);
+        }
         if ($parsed['wants_resume']) {
             return $this->resumeQuote($conversation, $flightRequest);
+        }
+        if ($conversation->state === 'ASK_RETURN_DATE' && isset($parsed['details']['departure_date'])) {
+            return $this->applyReturnDateAnswer($conversation, $flightRequest, $message);
+        }
+        if (in_array($conversation->state, ['START', 'ASK_ORIGIN'], true)
+            && ! preg_match('/\b(?:regresar|regresamos|regreso|volver|volvemos|vuelta)\b/u', $normalized)
+            && isset($parsed['details']['origin'], $parsed['details']['destination'])
+            && $this->shouldApplyParsedDetails($conversation, $flightRequest, $parsed)) {
+            return $this->applyExtractedDetails($conversation, $flightRequest, $parsed['details']);
         }
         if ($parsed['is_greeting']) {
             $this->conversationService->resetFlightRequest($conversation);
@@ -103,9 +115,6 @@ class WhatsAppChatbotService
             return $interpretation;
         }
         $details = $parsed['details'];
-        if (isset($details['origin'], $details['destination']) && $this->shouldApplyParsedDetails($conversation, $flightRequest, $parsed)) {
-            return $this->applyExtractedDetails($conversation, $flightRequest, $details);
-        }
         if ($directCorrection = $this->directCorrection($conversation, $flightRequest, $message, $normalized)) {
             return $directCorrection;
         }
@@ -378,6 +387,10 @@ class WhatsAppChatbotService
     /** @return array{state:string,message:string}|null */
     private function interpretMessage(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
     {
+        if ($replace = $this->interpretLocationReplacement($conversation, $flightRequest, $message, $normalized)) {
+            return $replace;
+        }
+
         if ($this->keepsExistingValues($normalized)) {
             return $this->continueFromMissing($conversation, $flightRequest, 'Perfecto, conservo lo demás igual.');
         }
@@ -414,6 +427,10 @@ class WhatsAppChatbotService
             return $returnTrip;
         }
 
+        if ($legChange = $this->interpretLegChange($conversation, $flightRequest, $message, $normalized)) {
+            return $legChange;
+        }
+
         if ($timeRange = $this->interpretDepartureDateWithTimeRange($conversation, $flightRequest, $message)) {
             return $timeRange;
         }
@@ -427,6 +444,82 @@ class WhatsAppChatbotService
         }
 
         return null;
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretLocationReplacement(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        if (! preg_match('/\b(?:cambia|cambiar|reemplaza|sustituye|quita|pon|mejor)\b/u', $normalized)
+            || ! preg_match('/\b(?:cambia|cambiar|reemplaza|sustituye|quita|pon|mejor)\s+(.+?)\s+por\s+(.+?)(?:\s+y\s+deja\b|\s+y\s+conserva\b|\s+lo\s+demas\b|\s+lo\s+demás\b|$)/iu', $message, $match)) {
+            return null;
+        }
+
+        $oldLocation = $this->normalizeLocationValue($match[1]);
+        $newLocation = $this->normalizeLocationValue($match[2]);
+        if (! $this->isPlausibleLocation($oldLocation) || ! $this->isPlausibleLocation($newLocation)) {
+            return null;
+        }
+
+        $result = $this->replaceLocationAcrossItinerary($flightRequest, $oldLocation, $newLocation);
+        if (! $result['changed']) {
+            return null;
+        }
+
+        return $this->continueFromMissing(
+            $conversation,
+            $flightRequest->refresh(),
+            'Perfecto, cambié '.$oldLocation.' por '.$newLocation.' y conservé lo demás igual.'
+        );
+    }
+
+    /** @return array{state:string,message:string}|null */
+    private function interpretLegChange(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        if (! preg_match('/\b(?:tramo|ida|vuelta|regreso|anterior|siguiente|primero|ultimo|último)\b/u', $normalized)) {
+            return null;
+        }
+
+        $date = ($datePhrase = $this->extractDatePhrase($message))
+            ? $this->parseDate($datePhrase)
+            : null;
+        $time = $this->parseTime($this->extractTimePhrase($message) ?? $message);
+        $usesSameTime = preg_match('/\b(?:misma hora|la misma hora|esa hora|igual)\b/u', $normalized) === 1;
+        if (! $date && ! $time && ! $usesSameTime) {
+            return null;
+        }
+
+        $target = $this->resolveReferencedLeg($conversation, $flightRequest, $message, $normalized);
+        if (! $target) {
+            return null;
+        }
+
+        $leg = $target['leg'];
+        $patch = [];
+        if ($date) {
+            if ($date->lt(Carbon::today(config('whatsapp.timezone')))) {
+                return $this->question('ASK_LEGS', 'Esa fecha ya pasó. ¿Qué otra fecha tienes en mente?', $flightRequest);
+            }
+            $patch['departure_date'] = $date->toDateString();
+        }
+        if ($time) {
+            $patch['departure_time'] = $time;
+        } elseif ($usesSameTime && ! empty($leg['departure_time'])) {
+            $patch['departure_time'] = $leg['departure_time'];
+        }
+
+        if ($patch === []) {
+            return null;
+        }
+
+        $this->patchItineraryLeg($flightRequest, $target['index'], $patch);
+        $conversation->update(['metadata' => [
+            ...($conversation->metadata ?? []),
+            'last_referenced_leg_ref' => $target['index'],
+            'last_changed_leg_ref' => $target['index'],
+            'last_changed_field' => array_key_last($patch),
+        ]]);
+
+        return $this->continueFromMissing($conversation, $flightRequest->refresh(), 'Perfecto, actualicé ese tramo.');
     }
 
     private function keepsExistingValues(string $message): bool
@@ -806,6 +899,34 @@ class WhatsAppChatbotService
             || str_contains($message, 'mi cotizacion')
             || str_contains($message, 'mi solicitud')
             || str_contains($message, 'reserva');
+    }
+
+    private function asksForCurrentRequest(string $message): bool
+    {
+        return str_contains($message, 'que tienes registrado')
+            || str_contains($message, 'que tengo registrado')
+            || str_contains($message, 'como quedo')
+            || str_contains($message, 'como quedo la ruta')
+            || str_contains($message, 'como quedaron las rutas')
+            || str_contains($message, 'que llevamos')
+            || str_contains($message, 'muestrame el itinerario')
+            || str_contains($message, 'mostrar itinerario')
+            || str_contains($message, 'que datos tienes')
+            || str_contains($message, 'datos hasta ahora')
+            || str_contains($message, 'rutas hasta ahora');
+    }
+
+    /** @return array{state:string,message:string} */
+    private function showCurrentRequest(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest): array
+    {
+        $next = $this->nextMissingState($flightRequest) ?? $this->invalidState($flightRequest);
+        $message = $this->summaryMessage($flightRequest);
+
+        if ($next) {
+            $message .= "\n\n".$this->prompt($next, $flightRequest);
+        }
+
+        return ['state' => $conversation->state, 'message' => $message];
     }
 
     private function isQuoteRejection(string $message): bool
@@ -1193,6 +1314,28 @@ class WhatsAppChatbotService
         }
 
         return null;
+    }
+
+    /** @return array{state:string,message:string} */
+    private function applyReturnDateAnswer(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message): array
+    {
+        $date = $this->parseDate($this->extractDatePhrase($message) ?? $message, $flightRequest->departure_date);
+        if (! $date) {
+            return $this->understandingFailure($conversation, 'ASK_RETURN_DATE', $this->invalidMessage('date', 'Fecha de regreso'), $flightRequest);
+        }
+        if ($date->lt(Carbon::today(config('whatsapp.timezone'))) || ($flightRequest->departure_date && $date->lt($flightRequest->departure_date))) {
+            return $this->understandingFailure($conversation, 'ASK_RETURN_DATE', 'El regreso no puede ser antes de la salida. ¿Qué otra fecha tienes en mente?', $flightRequest);
+        }
+
+        $attributes = ['return_date' => $date->toDateString()];
+        if ($time = $this->parseTime($this->extractTimePhrase($message) ?? $message)) {
+            $attributes['return_time'] = $time;
+        }
+
+        $flightRequest->update($attributes);
+        $this->clearUnderstandingFailures($conversation);
+
+        return $this->advance($conversation, $flightRequest->refresh(), $this->nextStateAfter('ASK_RETURN_DATE', $flightRequest->refresh()) ?? 'SHOW_SUMMARY');
     }
 
     /** @return array{state:string,message:string}|null */
@@ -1915,6 +2058,138 @@ class WhatsAppChatbotService
         return implode(' / ', array_filter($segments));
     }
 
+    /**
+     * @return array{changed:bool}
+     */
+    private function replaceLocationAcrossItinerary(WhatsAppFlightRequest $flightRequest, string $oldLocation, string $newLocation): array
+    {
+        $changed = false;
+        $updates = [];
+
+        foreach (['origin', 'destination'] as $field) {
+            if ($flightRequest->{$field} && $this->normalize((string) $flightRequest->{$field}) === $this->normalize($oldLocation)) {
+                $updates[$field] = $newLocation;
+                $changed = true;
+            }
+        }
+
+        $legs = $flightRequest->legs ?? [];
+        foreach ($legs as $index => $leg) {
+            foreach (['origin', 'destination'] as $field) {
+                if (($leg[$field] ?? null) && $this->normalize((string) $leg[$field]) === $this->normalize($oldLocation)) {
+                    $legs[$index][$field] = $newLocation;
+                    $changed = true;
+                }
+            }
+        }
+
+        if ($changed) {
+            $updates['legs'] = $this->deduplicateLegs($legs);
+            $flightRequest->update($updates);
+        }
+
+        return ['changed' => $changed];
+    }
+
+    /**
+     * @return array{index:int,leg:array<string, mixed>}|null
+     */
+    private function resolveReferencedLeg(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message, string $normalized): ?array
+    {
+        $legs = $this->itineraryLegs($flightRequest);
+        if ($legs === []) {
+            return null;
+        }
+
+        $routeMessage = preg_replace('/^\s*(?:el|la|ese|esa)?\s*tramo\s+/iu', '', $message) ?? $message;
+        $route = $this->extractClauseRoute($routeMessage);
+        if (! $route && preg_match('/^\s*([\pL .\'-]{2,80}?)\s+(?:a|hacia|para|-|→|->)\s+([\pL .\'-]{2,80}?)(?=\s+(?:muevelo|muévelo|cambialo|cámbialo|cambia|mejor|el|este|a las|como|$))/iu', $routeMessage, $match) === 1) {
+            $route = [
+                'origin' => $this->normalizeLocationValue($match[1]),
+                'destination' => $this->normalizeLocationValue($match[2]),
+            ];
+        }
+        if ($route) {
+            foreach ($legs as $index => $leg) {
+                if ($this->normalize((string) ($leg['origin'] ?? '')) === $this->normalize($route['origin'])
+                    && $this->normalize((string) ($leg['destination'] ?? '')) === $this->normalize($route['destination'])) {
+                    return ['index' => $index, 'leg' => $leg];
+                }
+            }
+        }
+
+        if (preg_match('/\b(?:primer|primero|ida)\b/u', $normalized)) {
+            return ['index' => 0, 'leg' => $legs[0]];
+        }
+        if (preg_match('/\b(?:ultimo|último|regreso|vuelta)\b/u', $normalized)) {
+            $index = array_key_last($legs);
+
+            return ['index' => $index, 'leg' => $legs[$index]];
+        }
+
+        $metadata = $conversation->metadata ?? [];
+        foreach (['current_leg_ref', 'last_referenced_leg_ref', 'last_changed_leg_ref', 'pending_leg_ref'] as $key) {
+            $index = $metadata[$key] ?? null;
+            if (is_int($index) && isset($legs[$index])) {
+                return ['index' => $index, 'leg' => $legs[$index]];
+            }
+        }
+
+        if (count($legs) === 1) {
+            return ['index' => 0, 'leg' => $legs[0]];
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $patch */
+    private function patchItineraryLeg(WhatsAppFlightRequest $flightRequest, int $index, array $patch): void
+    {
+        if ($index === 0) {
+            $flightRequest->update(array_intersect_key($patch, array_flip(['origin', 'destination', 'departure_date', 'departure_time'])));
+
+            return;
+        }
+
+        $legs = $flightRequest->legs ?? [];
+        $storedIndex = $index - 1;
+        if (! isset($legs[$storedIndex])) {
+            return;
+        }
+
+        $legs[$storedIndex] = [...$legs[$storedIndex], ...$patch];
+        $flightRequest->update([
+            'legs' => $this->deduplicateLegs($legs),
+            'trip_type' => $this->inferTripTypeFromLegs($this->itineraryLegs($flightRequest, $legs)),
+        ]);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $legs
+     * @return array<int, array<string, mixed>>
+     */
+    private function deduplicateLegs(array $legs): array
+    {
+        $unique = [];
+        $seen = [];
+
+        foreach ($legs as $leg) {
+            $key = implode('|', [
+                $this->normalize((string) ($leg['origin'] ?? '')),
+                $this->normalize((string) ($leg['destination'] ?? '')),
+                (string) ($leg['departure_date'] ?? ''),
+                (string) ($leg['departure_time'] ?? ''),
+            ]);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $unique[] = $leg;
+        }
+
+        return $unique;
+    }
+
     /** @param array<string, mixed> $leg */
     private function legLine(array $leg): string
     {
@@ -2288,7 +2563,7 @@ class WhatsAppChatbotService
         if (in_array($message, ['hoy', 'manana', 'mañana', 'pasado manana', 'pasado mañana'], true)) {
             return $today->addDays(['hoy' => 0, 'manana' => 1, 'mañana' => 1, 'pasado manana' => 2, 'pasado mañana' => 2][$message]);
         }
-        if (in_array($message, ['al dia siguiente', 'al día siguiente', 'dos dias despues', 'dos días después'], true)) {
+        if (in_array($message, ['dia siguiente', 'día siguiente', 'al dia siguiente', 'al día siguiente', 'dos dias despues', 'dos días después'], true)) {
             return $today->addDays(str_starts_with($message, 'dos') ? 2 : 1);
         }
         if (preg_match('/^(?:(?:este|el|mismo|proximo|pr[oó]ximo)\s+)*(lunes|martes|miercoles|jueves|viernes|sabado|domingo)$/', $message, $match)) {

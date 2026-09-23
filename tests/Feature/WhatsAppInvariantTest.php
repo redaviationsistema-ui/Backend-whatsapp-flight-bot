@@ -7,6 +7,7 @@ use App\Models\WhatsAppFlightRequest;
 use App\Services\Flights\FlightApiService;
 use App\Services\WhatsApp\WhatsAppChatbotService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
@@ -111,6 +112,110 @@ class WhatsAppInvariantTest extends TestCase
         foreach ($before as $field => $value) {
             $this->assertEquals($value, $flight->refresh()->{$field});
         }
+    }
+
+    public function test_current_itinerary_question_shows_summary_without_capturing_answer(): void
+    {
+        $flight = $this->completeFlight(['client_email' => null]);
+        $flight->conversation()->update(['state' => 'ASK_EMAIL']);
+        $before = $flight->only(['origin', 'destination', 'departure_date', 'departure_time', 'passengers', 'trip_type', 'client_email']);
+
+        $result = $this->answer($flight, '¿Cómo quedaron las rutas?');
+
+        $flight->refresh();
+        $this->assertSame('ASK_EMAIL', $result['state']);
+        $this->assertStringContainsString('Perfecto, esto es lo que tengo hasta ahora:', $result['message']);
+        $this->assertStringContainsString('Toluca → Cancún', $result['message']);
+        $this->assertStringContainsString('correo', mb_strtolower($result['message']));
+        foreach ($before as $field => $value) {
+            $this->assertEquals($value, $flight->{$field});
+        }
+    }
+
+    public function test_contextual_that_leg_date_patch_updates_only_referenced_leg(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23', config('whatsapp.timezone')));
+        $flight = $this->completeFlight([
+            'trip_type' => 'MULTI_CITY',
+            'destination' => 'Bravo',
+            'legs' => [
+                ['origin' => 'Bravo', 'destination' => 'Charlie', 'departure_date' => '2026-10-03', 'departure_time' => '12:00:00'],
+                ['origin' => 'Charlie', 'destination' => 'Delta', 'departure_date' => '2026-10-04', 'departure_time' => '13:00:00'],
+            ],
+        ]);
+        $flight->conversation()->update([
+            'state' => 'SHOW_SUMMARY',
+            'metadata' => ['last_referenced_leg_ref' => 1],
+        ]);
+
+        $result = $this->answer($flight, 'Mejor ese tramo el 3 de octubre.');
+
+        $flight->refresh();
+        $this->assertSame('SHOW_SUMMARY', $result['state']);
+        $this->assertSame('2026-10-02', $flight->departure_date->toDateString());
+        $this->assertSame('2026-10-03', $flight->legs[0]['departure_date']);
+        $this->assertSame('12:00:00', $flight->legs[0]['departure_time']);
+        $this->assertSame('2026-10-04', $flight->legs[1]['departure_date']);
+    }
+
+    public function test_same_time_on_named_leg_preserves_that_leg_time(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23', config('whatsapp.timezone')));
+        $flight = $this->completeFlight([
+            'trip_type' => 'MULTI_CITY',
+            'departure_time' => '07:00:00',
+            'destination' => 'Bravo',
+            'legs' => [
+                ['origin' => 'Bravo', 'destination' => 'Charlie', 'departure_date' => '2026-10-03', 'departure_time' => '12:00:00'],
+                ['origin' => 'Charlie', 'destination' => 'Delta', 'departure_date' => '2026-10-05', 'departure_time' => '13:00:00'],
+            ],
+        ]);
+        $flight->conversation()->update(['state' => 'SHOW_SUMMARY']);
+
+        $result = $this->answer($flight, 'El tramo Bravo a Charlie muévelo al 4 de octubre, a la misma hora.');
+
+        $flight->refresh();
+        $this->assertSame('SHOW_SUMMARY', $result['state']);
+        $this->assertSame('2026-10-04', $flight->legs[0]['departure_date']);
+        $this->assertSame('12:00:00', $flight->legs[0]['departure_time']);
+        $this->assertSame('07:00:00', $flight->departure_time);
+        $this->assertSame('13:00:00', $flight->legs[1]['departure_time']);
+    }
+
+    #[DataProvider('locationReplacementProvider')]
+    public function test_replace_location_preserves_unaffected_itinerary_fields(array $route): void
+    {
+        $flight = $this->completeFlight([
+            'origin' => $route['a'],
+            'destination' => $route['b'],
+            'trip_type' => 'MULTI_CITY',
+            'legs' => [
+                ['origin' => $route['b'], 'destination' => $route['c'], 'departure_date' => '2026-10-03', 'departure_time' => '12:00:00'],
+                ['origin' => $route['c'], 'destination' => $route['d'], 'departure_date' => '2026-10-04', 'departure_time' => '13:00:00'],
+            ],
+        ]);
+        $flight->conversation()->update(['state' => 'SHOW_SUMMARY']);
+
+        $result = $this->answer($flight, "Cambia {$route['b']} por {$route['x']} y deja todo lo demás igual.");
+
+        $flight->refresh();
+        $this->assertSame('SHOW_SUMMARY', $result['state']);
+        $this->assertSame($route['a'], $flight->origin);
+        $this->assertSame($route['x'], $flight->destination);
+        $this->assertSame($route['x'], $flight->legs[0]['origin']);
+        $this->assertSame($route['c'], $flight->legs[0]['destination']);
+        $this->assertSame('2026-10-03', $flight->legs[0]['departure_date']);
+        $this->assertSame('12:00:00', $flight->legs[0]['departure_time']);
+        $this->assertSame($route['d'], $flight->legs[1]['destination']);
+    }
+
+    /** @return array<string, array{route:array{a:string,b:string,c:string,d:string,x:string}}> */
+    public static function locationReplacementProvider(): array
+    {
+        return [
+            'abstract_route_one' => ['route' => ['a' => 'Alpha City', 'b' => 'Bravo City', 'c' => 'Charlie City', 'd' => 'Delta City', 'x' => 'Echo City']],
+            'abstract_route_two' => ['route' => ['a' => 'Lima Norte', 'b' => 'Mango Norte', 'c' => 'Nectar Norte', 'd' => 'Olivo Norte', 'x' => 'Pino Norte']],
+        ];
     }
 
     #[TestWith(['Need a charter from Toluca to Cancun Friday night.', 'Toluca', 'Cancun'])]
