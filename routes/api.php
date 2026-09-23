@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Flights\QuoteParityController;
+use App\Http\Controllers\Flights\QuotePreviewController;
 use App\Http\Controllers\WhatsApp\WhatsAppAdminConversationController;
 use App\Http\Controllers\WhatsApp\WhatsAppAdminSessionController;
 use App\Http\Controllers\WhatsApp\WhatsAppWebhookController;
@@ -16,6 +18,14 @@ Route::get('/webhooks/whatsapp', [WhatsAppWebhookController::class, 'verify'])
 
 Route::post('/webhooks/whatsapp', [WhatsAppWebhookController::class, 'receive'])
     ->name('whatsapp.webhook.receive.meta');
+
+Route::post('/v1/client/quotes/preview', QuotePreviewController::class)
+    ->middleware('throttle:60,1')
+    ->name('client.quotes.preview');
+
+Route::post('/v1/client/quotes/parity-check', QuoteParityController::class)
+    ->middleware('throttle:60,1')
+    ->name('client.quotes.parity-check');
 
 Route::prefix('admin')->name('admin.')->middleware('web')->group(function (): void {
     Route::get('csrf', [WhatsAppAdminSessionController::class, 'csrf'])->name('csrf');

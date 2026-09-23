@@ -19,6 +19,7 @@ class WhatsAppInvariantTest extends TestCase
     #[TestWith([['origin' => null], 'ASK_ORIGIN'])]
     #[TestWith([['destination' => null], 'ASK_DESTINATION'])]
     #[TestWith([['passengers' => null], 'ASK_PASSENGERS'])]
+    #[TestWith([['trip_type' => null], 'ASK_TRIP_TYPE'])]
     #[TestWith([['trip_type' => 'ROUND_TRIP', 'return_date' => '2026-10-01'], 'ASK_RETURN_DATE'])]
     #[TestWith([['origin' => 'Toluca', 'destination' => 'Toluca'], 'ASK_DESTINATION'])]
     public function test_incomplete_or_invalid_request_never_confirms(array $overrides, string $expectedState): void
@@ -31,6 +32,37 @@ class WhatsAppInvariantTest extends TestCase
         $this->assertSame($expectedState, $result['state']);
         $this->assertSame('collecting', $flight->refresh()->status);
         $this->assertNull($flight->confirmed_at);
+    }
+
+    public function test_aircraft_preference_answer_is_not_treated_as_out_of_scope(): void
+    {
+        $flight = $this->completeFlight([
+            'aircraft_preference' => null,
+            'is_time_flexible' => null,
+        ]);
+        $flight->conversation()->update(['state' => 'ASK_AIRCRAFT_PREFERENCE']);
+
+        $result = $this->answer($flight, 'CESSNA 550');
+
+        $this->assertSame('ASK_TIME_FLEXIBILITY', $result['state']);
+        $this->assertSame('CESSNA 550', $flight->refresh()->aircraft_preference);
+        $this->assertStringNotContainsString('exclusivamente en renta', $result['message']);
+    }
+
+    public function test_round_trip_answer_asks_return_date_once(): void
+    {
+        $flight = $this->completeFlight([
+            'trip_type' => null,
+            'return_date' => null,
+            'return_time' => null,
+        ]);
+        $flight->conversation()->update(['state' => 'ASK_TRIP_TYPE']);
+
+        $result = $this->answer($flight, 'Será ida y vuelta.');
+
+        $this->assertSame('ASK_RETURN_DATE', $result['state']);
+        $this->assertSame('ROUND_TRIP', $flight->refresh()->trip_type);
+        $this->assertSame(1, substr_count($result['message'], '¿Qué día quieres regresar?'));
     }
 
     #[DataProvider('unknownInputsProvider')]
