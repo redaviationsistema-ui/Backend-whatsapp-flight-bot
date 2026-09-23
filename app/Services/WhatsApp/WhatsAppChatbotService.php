@@ -103,6 +103,10 @@ class WhatsAppChatbotService
         if ($parsed['is_question'] || $this->isHelpRequest($normalized)) {
             return $this->help($conversation, $flightRequest);
         }
+        if (in_array($conversation->state, ['ASK_AIRCRAFT_PREFERENCE', 'ASK_TRIP_TYPE'], true)
+            && $this->isAnswerToActiveQuestion($conversation->state, trim($message), $normalized, $flightRequest)) {
+            return $this->captureAnswer($conversation, $flightRequest, trim($message));
+        }
         if ($parsed['unsupported_intent']) {
             $conversation->update(['metadata' => [...($conversation->metadata ?? []), 'last_bot_intent' => 'unsupported_offer']]);
 
@@ -1467,6 +1471,28 @@ class WhatsAppChatbotService
         return $this->advance($conversation, $flightRequest, $next);
     }
 
+    private function isAnswerToActiveQuestion(string $state, string $message, string $normalized, WhatsAppFlightRequest $flightRequest): bool
+    {
+        $question = self::QUESTIONS[$state] ?? null;
+
+        if (! $question || $message === '' || mb_strlen($message) > 250) {
+            return false;
+        }
+
+        return match ($question['type']) {
+            'location' => $this->isPlausibleLocation($this->normalizeLocationValue($message)),
+            'date' => $this->parseDate($this->extractDatePhrase($message) ?? $message, $question['field'] === 'return_date' ? $flightRequest->departure_date : null) !== null,
+            'time' => $this->parseTime($this->extractTimePhrase($message) ?? $message) !== null,
+            'passengers', 'count' => $this->parseCount($normalized, $question['type'] === 'count') !== false,
+            'boolean' => $this->parseBoolean($normalized) !== null,
+            'email' => (bool) filter_var($this->extractEmail($message) ?? $message, FILTER_VALIDATE_EMAIL),
+            'trip' => $this->parseTripType($normalized) !== null,
+            'money' => $this->parseMoney($normalized) !== false,
+            'legs', 'text', 'optional' => true,
+            default => false,
+        };
+    }
+
     private function nextStateAfter(string $state, WhatsAppFlightRequest $flightRequest): ?string
     {
         $states = array_keys(self::QUESTIONS);
@@ -2335,6 +2361,18 @@ class WhatsAppChatbotService
     /** @return array{state:string,message:string} */
     private function showSummary(WhatsAppFlightRequest $flightRequest): array
     {
+        if ($invalid = $this->invalidState($flightRequest)) {
+            return $this->question($invalid, null, $flightRequest);
+        }
+
+        if ($flightRequest->trip_type === 'ROUND_TRIP' && (! $flightRequest->return_date || ! $flightRequest->return_time)) {
+            return $this->question($this->nextMissingState($flightRequest) ?? 'ASK_RETURN_DATE', null, $flightRequest);
+        }
+
+        if ($flightRequest->trip_type === 'MULTI_CITY' && ($flightRequest->legs === null || $this->nextIncompleteLeg($flightRequest))) {
+            return $this->question('ASK_LEGS', null, $flightRequest);
+        }
+
         return ['state' => 'SHOW_SUMMARY', 'message' => $this->summaryMessage($flightRequest)."\n\n¿Todo está correcto para solicitar la cotización?"];
     }
 
@@ -2533,9 +2571,12 @@ class WhatsAppChatbotService
     private function parseTripType(string $message): ?string
     {
         return match (true) {
-            in_array($message, ['1', 'one_way', 'one way', 'sencillo', 'solo ida', 'ida', 'solo de ida', 'sin regreso', 'ow'], true) => 'ONE_WAY',
-            in_array($message, ['2', 'round_trip', 'round trip', 'redondo', 'viaje redondo', 'ida y vuelta', 'ida y regreso', 'regreso', 'rt'], true) => 'ROUND_TRIP',
-            in_array($message, ['3', 'multi_city', 'multi city', 'multidestino', 'multi destino', 'varios destinos'], true) => 'MULTI_CITY',
+            in_array($message, ['1', 'one_way', 'one way', 'sencillo', 'solo ida', 'ida', 'solo de ida', 'sin regreso', 'ow'], true)
+                || preg_match('/\b(?:solo ida|solo de ida|sin regreso|sencillo)\b/u', $message) === 1 => 'ONE_WAY',
+            in_array($message, ['2', 'round_trip', 'round trip', 'redondo', 'viaje redondo', 'ida y vuelta', 'ida y regreso', 'regreso', 'rt'], true)
+                || preg_match('/\b(?:ida y vuelta|ida y regreso|viaje redondo|redondo)\b/u', $message) === 1 => 'ROUND_TRIP',
+            in_array($message, ['3', 'multi_city', 'multi city', 'multidestino', 'multi destino', 'varios destinos'], true)
+                || preg_match('/\b(?:multidestino|multi destino|varios destinos)\b/u', $message) === 1 => 'MULTI_CITY',
             default => null,
         };
     }
