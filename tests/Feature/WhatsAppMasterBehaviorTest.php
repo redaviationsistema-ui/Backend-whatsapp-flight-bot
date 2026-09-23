@@ -557,6 +557,25 @@ class WhatsAppMasterBehaviorTest extends TestCase
         $this->assertStringNotContainsString('No entendí la hora', $result['message']);
     }
 
+    public function test_flow_finishes_after_last_required_contact_field_without_optional_loop(): void
+    {
+        $flight = $this->completeFlight([
+            'aircraft_preference' => 'sin preferencia',
+            'other_services' => 'ninguno',
+            'notes' => 'sin notas',
+            'client_email' => null,
+        ]);
+        $flight->conversation()->update(['state' => 'ASK_EMAIL']);
+
+        $result = $this->answer($flight, 'juan@example.com');
+
+        $this->assertSame('SHOW_SUMMARY', $result['state']);
+        $this->assertSame('juan@example.com', $flight->refresh()->client_email);
+        $this->assertStringContainsString('¿Todo está correcto para solicitar la cotización?', $result['message']);
+        $this->assertStringNotContainsString('empresa', mb_strtolower($result['message']));
+        $this->assertStringNotContainsString('presupuesto', mb_strtolower($result['message']));
+    }
+
     /** @return array{state:string,message:string} */
     private function answer(WhatsAppFlightRequest $flight, string $answer): array
     {

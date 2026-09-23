@@ -864,6 +864,9 @@ class WhatsAppChatbotService
 
         foreach (array_slice($states, $currentIndex + 1) as $nextState) {
             $question = self::QUESTIONS[$nextState];
+            if (in_array($question['field'], ['company', 'budget'], true)) {
+                continue;
+            }
             if (in_array($question['field'], ['return_date', 'return_time'], true) && $flightRequest->trip_type !== 'ROUND_TRIP') {
                 continue;
             }

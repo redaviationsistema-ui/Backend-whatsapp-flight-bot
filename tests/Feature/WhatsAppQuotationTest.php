@@ -554,8 +554,10 @@ class WhatsAppQuotationTest extends TestCase
     #[TestWith(['ASK_PASSENGERS', '9', 'passengers', 9, 'ASK_AIRCRAFT_PREFERENCE', '9 pasajeros'])]
     #[TestWith(['ASK_AIRCRAFT_PREFERENCE', 'Cabina amplia', 'aircraft_preference', 'Cabina amplia', 'ASK_TIME_FLEXIBILITY', 'Cabina amplia'])]
     #[TestWith(['ASK_NAME', 'María García', 'client_name', 'María García', 'ASK_EMAIL', 'María García'])]
-    #[TestWith(['ASK_EMAIL', 'maria@example.org', 'client_email', 'maria@example.org', 'ASK_COMPANY', 'maria@example.org'])]
-    #[TestWith(['ASK_COMPANY', 'omitir', 'company', null, 'ASK_BUDGET', 'Perfecto, esto es lo que tengo hasta ahora'])]
+    #[TestWith(['ASK_EMAIL', 'maria@example.org', 'client_email', 'maria@example.org', 'ASK_NOTES', 'maria@example.org'])]
+    #[TestWith(['ASK_COMPANY', 'omitir', 'company', null, 'ASK_NOTES', 'Perfecto, esto es lo que tengo hasta ahora'])]
+    #[TestWith(['ASK_COMPANY', 'Sky Group', 'company', 'Sky Group', 'ASK_NOTES', 'Cotización para Sky Group'])]
+    #[TestWith(['ASK_BUDGET', '50000 USD', 'budget', '50000', 'ASK_NOTES', 'Presupuesto aproximado: 50,000 USD'])]
     public function test_answers_and_summary_use_only_captured_values(string $state, string $input, string $field, mixed $expected, string $nextState, string $summaryLine): void
     {
         $flight = WhatsAppFlightRequest::factory()
