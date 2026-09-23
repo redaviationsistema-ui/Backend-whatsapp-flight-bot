@@ -13,6 +13,7 @@ use Faker\Factory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestWith;
@@ -279,16 +280,16 @@ class WhatsAppMasterBehaviorTest extends TestCase
         }
     }
 
-    public function test_one_way_with_return_date_asks_for_clarification_without_assuming(): void
+    public function test_one_way_with_return_date_adds_return_instead_of_ignoring_signal(): void
     {
         $flight = $this->completeFlight(['trip_type' => 'ONE_WAY']);
 
         $result = $this->answer($flight, 'regreso el sábado');
 
-        $this->assertSame('ASK_TRIP_TYPE', $result['state']);
-        $this->assertSame('ONE_WAY', $flight->refresh()->trip_type);
-        $this->assertNull($flight->return_date);
-        $this->assertStringContainsString('ida y vuelta', $result['message']);
+        $this->assertSame('ASK_RETURN_TIME', $result['state']);
+        $this->assertSame('ROUND_TRIP', $flight->refresh()->trip_type);
+        $this->assertSame('2026-10-03', $flight->return_date->toDateString());
+        $this->assertStringContainsString('regresarían', $result['message']);
     }
 
     #[TestWith(['ASK_DEPARTURE_DATE', '2025-09-23', 'departure_date'])]
@@ -435,6 +436,85 @@ class WhatsAppMasterBehaviorTest extends TestCase
         $this->assertSame('ASK_ORIGIN', $result['state']);
         $this->assertNull($flight->origin);
         $this->assertNull($flight->destination);
+    }
+
+    public function test_quote_intent_with_general_temporal_hint_asks_origin_without_location_error(): void
+    {
+        Log::spy();
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Hola, necesito cotizar un vuelo para la próxima semana.');
+
+        $this->assertSame('ASK_ORIGIN', $result['state']);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertNull($flight->destination);
+        $this->assertNull($flight->conversation->refresh()->metadata['understanding_failures'] ?? null);
+        $this->assertStringNotContainsString('No alcancé a identificar', $result['message']);
+        $this->assertStringContainsString('Desde qué ciudad', $result['message']);
+        Log::shouldHaveReceived('info')->with('WhatsApp chatbot engine decision.', \Mockery::on(
+            fn (array $context): bool => ($context['intent'] ?? null) === 'FLIGHT_QUOTE'
+        ));
+    }
+
+    public function test_plain_quote_intent_asks_origin_without_location_error(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Quiero cotizar un vuelo.');
+
+        $this->assertSame('ASK_ORIGIN', $result['state']);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertNull($flight->conversation->refresh()->metadata['understanding_failures'] ?? null);
+        $this->assertStringNotContainsString('No alcancé a identificar', $result['message']);
+        $this->assertStringContainsString('Desde qué ciudad', $result['message']);
+    }
+
+    public function test_quote_intent_with_concrete_date_asks_origin_without_location_error(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-22', config('whatsapp.timezone')));
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Necesito un vuelo mañana.');
+
+        $this->assertSame('ASK_ORIGIN', $result['state']);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertNull($flight->conversation->refresh()->metadata['understanding_failures'] ?? null);
+        $this->assertStringNotContainsString('No alcancé a identificar', $result['message']);
+        $this->assertStringContainsString('Desde qué ciudad', $result['message']);
+    }
+
+    public function test_invalid_direct_origin_answer_increments_understanding_failure(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Quién sabe');
+
+        $this->assertSame('ASK_ORIGIN', $result['state']);
+        $this->assertNull($flight->refresh()->origin);
+        $this->assertSame(1, $flight->conversation->refresh()->metadata['understanding_failures']['ASK_ORIGIN']);
+        $this->assertStringContainsString('No alcancé a identificar', $result['message']);
+    }
+
+    public function test_natural_origin_answer_with_saldríamos_saves_origin_without_fallback(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+
+        $result = $this->answer($flight, 'Saldríamos de Toluca.');
+
+        $this->assertSame('ASK_DESTINATION', $result['state']);
+        $this->assertSame('Toluca', $flight->refresh()->origin);
+        $this->assertNull($flight->conversation->refresh()->metadata['understanding_failures'] ?? null);
+        $this->assertStringNotContainsString('No alcancé a identificar', $result['message']);
     }
 
     public function test_origin_with_alternate_origin_does_not_become_destination(): void
