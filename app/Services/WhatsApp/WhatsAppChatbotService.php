@@ -390,6 +390,10 @@ class WhatsAppChatbotService
             return $this->continueFromMissing($conversation, $flightRequest);
         }
 
+        if ($itinerary = $this->extractTwoLegItinerary($message)) {
+            return $this->applyExtractedDetails($conversation, $flightRequest, $itinerary);
+        }
+
         if ($route = $this->confirmPendingRoute($conversation, $flightRequest, $message, $normalized)) {
             return $route;
         }
@@ -1467,48 +1471,95 @@ class WhatsAppChatbotService
     /** @return array{origin:string,destination:string,departure_date?:string,departure_time?:string,trip_type:string,legs:array<int, array{origin:string,destination:string,departure_date:?string,departure_time:?string}>}|null */
     private function extractTwoLegItinerary(string $message): ?array
     {
-        if (preg_match('/\b(?:de|desde)\s+([\pL .\'-]{2,80}?)\s+\b(?:a|hacia|para)\b\s+([\pL .\'-]{2,80}?)(?=\s+(?:el|este|a las|como|\d)).*?\b(?:y|luego|despues|después)\s+(?:de|desde)\s+([\pL .\'-]{2,80}?)\s+\b(?:a|hacia|para)\b\s+([\pL .\'-]{2,80}?)(?=\s+(?:el|este|a las|como|$)|[.;,]?\s*$)/iu', $message, $match) !== 1) {
+        $clauses = $this->extractRouteClauses($message);
+        if (count($clauses) < 2) {
             return null;
         }
 
-        $first = [
-            'origin' => $this->normalizeLocationValue($match[1]),
-            'destination' => $this->normalizeLocationValue($match[2]),
-        ];
-        $second = [
-            'origin' => $this->normalizeLocationValue($match[3]),
-            'destination' => $this->normalizeLocationValue($match[4]),
-        ];
+        $legs = [];
+        foreach (array_slice($clauses, 0, 2) as $clause) {
+            $route = $this->extractClauseRoute($clause);
+            if (! $route) {
+                return null;
+            }
 
-        foreach ([$first, $second] as $leg) {
+            $previousLeg = end($legs) ?: null;
+            $leg = [
+                ...$route,
+                'departure_date' => ($date = $this->parseDate($this->extractDatePhrase($clause) ?? '', $previousLeg['departure_date'] ?? null)) ? $date->toDateString() : null,
+                'departure_time' => ($timePhrase = $this->extractTimePhrase($clause)) ? $this->parseTime($timePhrase) : null,
+            ];
+
             if (! $this->isPlausibleLocation($leg['origin'])
                 || ! $this->isPlausibleLocation($leg['destination'])
                 || $this->normalize($leg['origin']) === $this->normalize($leg['destination'])) {
                 return null;
             }
+
+            $legs[] = $leg;
         }
 
-        preg_match_all('/\b(\d{1,2}\s+(?:de\s+)?(?:ene|enero|feb|febrero|mar|marzo|abr|abril|may|mayo|jun|junio|jul|julio|ago|agosto|sep|sept|septiembre|oct|octubre|nov|noviembre|dic|diciembre)(?:\s+de\s+\d{4})?|\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}|(?:el\s+|este\s+|mismo\s+|proximo\s+|pr[oó]ximo\s+)?(?:lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)|hoy|mañana|manana|pasado mañana|pasado manana|al dia siguiente|al día siguiente|dos dias despues|dos días después)\b/iu', $message, $dateMatches);
-        preg_match_all('/(?:como\s+|alrededor de\s+|sobre\s+)?(?:a\s+las?\s+((?:\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?::[0-5]\d)?(?:\s*(?:am|pm|de la manana|de la mañana|de la tarde|de la noche))?)|((?:\d{1,2}|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?::[0-5]\d)?\s*(?:am|pm|de la manana|de la mañana|de la tarde|de la noche)|mediod[ií]a|medianoche))/iu', $message, $timeMatches);
-
-        $firstDate = isset($dateMatches[1][0]) ? $this->parseDate($dateMatches[1][0]) : null;
-        $secondDate = isset($dateMatches[1][1]) ? $this->parseDate($dateMatches[1][1], $firstDate) : null;
-        $firstTimePhrase = $timeMatches[1][0] ?: ($timeMatches[2][0] ?? null);
-        $secondTimePhrase = $timeMatches[1][1] ?: ($timeMatches[2][1] ?? null);
-
         return [
-            'origin' => $first['origin'],
-            'destination' => $first['destination'],
-            'departure_date' => $firstDate?->toDateString(),
-            'departure_time' => $firstTimePhrase ? $this->parseTime($firstTimePhrase) : null,
+            'origin' => $legs[0]['origin'],
+            'destination' => $legs[0]['destination'],
+            'departure_date' => $legs[0]['departure_date'],
+            'departure_time' => $legs[0]['departure_time'],
             'trip_type' => 'MULTI_CITY',
             'legs' => [[
-                'origin' => $second['origin'],
-                'destination' => $second['destination'],
-                'departure_date' => $secondDate?->toDateString(),
-                'departure_time' => $secondTimePhrase ? $this->parseTime($secondTimePhrase) : null,
+                'origin' => $legs[1]['origin'],
+                'destination' => $legs[1]['destination'],
+                'departure_date' => $legs[1]['departure_date'],
+                'departure_time' => $legs[1]['departure_time'],
             ]],
         ];
+    }
+
+    /** @return array<int, string> */
+    private function extractRouteClauses(string $message): array
+    {
+        $message = trim(preg_replace('/\s+/', ' ', str_replace(['.', ';'], ['.', ' ; '], $message)) ?? $message);
+        $pattern = '/(?=(?:^|[;,]|\s+y\s+)\s*(?:(?:quiero\s+)?(?:volar|ir)\s+)?(?:(?:la\s+)?(?:ida|vuelta)\s+(?:ser(?:i|í)a\s+)?)?(?:(?:salimos|salgo)\s+)?(?:regresar|regresamos|volver|volvemos)?\s*(?:(?:el|este)\s+)?(?:(?:lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)\s+)?(?:desde|de)?\s*[\pL .\'-]{2,80}?\s*(?:-|→|->|\s+a\s+|\s+hacia\s+|\s+para\s+)\s*[\pL .\'-]{2,80})/iu';
+        if (preg_match_all($pattern, $message, $matches, PREG_OFFSET_CAPTURE) < 2) {
+            return [];
+        }
+
+        $clauses = [];
+        foreach ($matches[0] as $index => $match) {
+            $start = $match[1];
+            $end = $matches[0][$index + 1][1] ?? strlen($message);
+            $clause = trim(substr($message, $start, $end - $start), " \t\n\r\0\x0B,;.");
+            $clause = preg_replace('/^(?:y|,|;)\s*/iu', '', $clause) ?? $clause;
+            $clauses[] = $clause;
+        }
+
+        return $clauses;
+    }
+
+    /** @return array{origin:string,destination:string}|null */
+    private function extractClauseRoute(string $clause): ?array
+    {
+        $location = '[\pL .\'-]{2,80}?';
+        $datePrefix = '(?:(?:el|este)\s+)?(?:(?:lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)\s+)?';
+        $prefix = '(?:(?:quiero\s+)?(?:volar|ir)\s+)?(?:(?:la\s+)?(?:ida|vuelta)\s+(?:ser(?:i|í)a\s+)?)?(?:(?:salimos|salgo)\s+)?(?:regresar|regresamos|volver|volvemos)?\s*'.$datePrefix;
+        $ending = '(?=\s+(?:el|este|a las|como|$)|[.;,]?\s*$)';
+        $patterns = [
+            '/^\s*'.$prefix.'(?:desde|de)\s+('.$location.')\s+(?:a|hacia|para)\s+('.$location.')'.$ending.'/iu',
+            '/^\s*'.$prefix.'('.$location.')\s*(?:-|→|->)\s*('.$location.')'.$ending.'/iu',
+            '/^\s*'.$prefix.'('.$location.')\s+(?:a|hacia|para)\s+('.$location.')'.$ending.'/iu',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $clause, $match) !== 1) {
+                continue;
+            }
+
+            return [
+                'origin' => $this->normalizeLocationValue($match[1]),
+                'destination' => $this->normalizeLocationValue($match[2]),
+            ];
+        }
+
+        return null;
     }
 
     /** @return array{origin:string,destination:string}|null */

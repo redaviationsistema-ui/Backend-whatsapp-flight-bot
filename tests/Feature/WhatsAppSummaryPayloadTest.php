@@ -164,6 +164,29 @@ class WhatsAppSummaryPayloadTest extends TestCase
         $this->assertSame(['Cancún', 'CDMX'], array_column($payload['legs'], 'destination'));
     }
 
+    public function test_clause_aware_open_jaw_dates_stay_attached_to_their_leg(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00', config('whatsapp.timezone')));
+        $flight = WhatsAppFlightRequest::factory()->create();
+
+        $result = $this->answer($flight, 'Quiero volar de Toluca a Cancún el viernes y regresar el domingo desde Mérida a CDMX.');
+
+        $flight->refresh();
+        $this->assertSame('ASK_DEPARTURE_TIME', $result['state']);
+        $this->assertSame('MULTI_CITY', $flight->trip_type);
+        $this->assertSame('Toluca', $flight->origin);
+        $this->assertSame('Cancún', $flight->destination);
+        $this->assertSame('2026-09-25', $flight->departure_date->toDateString());
+        $this->assertNull($flight->departure_time);
+        $this->assertSame('Mérida', $flight->legs[0]['origin']);
+        $this->assertSame('CDMX', $flight->legs[0]['destination']);
+        $this->assertSame('2026-09-27', $flight->legs[0]['departure_date']);
+        $this->assertNull($flight->legs[0]['departure_time']);
+        $this->assertNotSame($flight->departure_date->toDateString(), $flight->legs[0]['departure_date']);
+        $this->assertStringNotContainsString('Desde qué ciudad', $result['message']);
+        $this->assertStringContainsString('A qué hora', $result['message']);
+    }
+
     public function test_second_leg_correction_does_not_modify_first_leg(): void
     {
         $flight = $this->flight([
