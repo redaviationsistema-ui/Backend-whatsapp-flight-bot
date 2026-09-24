@@ -5,6 +5,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpFoundation\Response;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -18,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'whatsapp.admin' => EnsureUserIsWhatsAppAdmin::class,
         ]);
+        $middleware->redirectGuestsTo(fn (Request $request): ?string => $request->is('api/*') || ! Route::has('login') ? null : route('login'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->respond(function (Response $response): Response {

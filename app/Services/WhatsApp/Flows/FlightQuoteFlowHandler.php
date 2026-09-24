@@ -49,7 +49,7 @@ class FlightQuoteFlowHandler
         $normalized = $parsed['normalized_text'];
         $this->logEngineDecision($conversation, $parsed, 'parsed');
         if ($parsed['wants_human']) {
-            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => 'Te conectaremos con un asesor para continuar con tu solicitud.'];
+            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => '👨‍💼 Te conectaremos con un asesor para continuar con tu solicitud.'];
         }
         if ($conversation->state === 'TRANSFER_TO_HUMAN') {
             return ['state' => 'TRANSFER_TO_HUMAN', 'message' => ''];
@@ -57,7 +57,7 @@ class FlightQuoteFlowHandler
         if ($parsed['wants_cancel']) {
             $flightRequest->update(['status' => 'cancelled']);
 
-            return ['state' => 'CANCELLED', 'message' => 'Solicitud cancelada. Escribe de nuevo si deseas iniciar otra cotización.'];
+            return ['state' => 'CANCELLED', 'message' => '✅ Solicitud cancelada. Escribe de nuevo si deseas iniciar otra cotización.'];
         }
         if ($outOfScopeRoute = $this->handleOutOfScopeRouteFollowUp($conversation, $message)) {
             return $outOfScopeRoute;
@@ -69,13 +69,13 @@ class FlightQuoteFlowHandler
             $this->conversationService->resetFlightRequest($conversation);
             $conversation->update(['metadata' => null]);
 
-            return ['state' => 'START', 'message' => 'Entendido. Si más adelante necesitas cotizar un vuelo privado, aquí estaremos para ayudarte.'];
+            return ['state' => 'START', 'message' => '✈️ Entendido. Si más adelante necesitas cotizar un vuelo privado, aquí estaremos para ayudarte.'];
         }
         if ($this->wantsNewQuote($normalized)) {
             $flightRequest = $this->conversationService->resetFlightRequest($conversation);
             $conversation->update(['metadata' => null]);
 
-            return ['state' => 'ASK_ORIGIN', 'message' => 'Claro, iniciemos una nueva cotización. ¿Desde qué ciudad o aeropuerto deseas salir?'];
+            return ['state' => 'ASK_ORIGIN', 'message' => '✈️ Claro, iniciemos una nueva cotización. 📍 ¿Desde qué ciudad o aeropuerto deseas salir?'];
         }
         if ($parsed['asks_status']) {
             return $this->quoteStatus($conversation, $flightRequest);
@@ -99,7 +99,7 @@ class FlightQuoteFlowHandler
             $this->conversationService->resetFlightRequest($conversation);
             $conversation->update(['metadata' => null]);
 
-            return ['state' => 'ASK_ORIGIN', 'message' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?"];
+            return ['state' => 'ASK_ORIGIN', 'message' => "👋 ¡Hola! Bienvenido a *Sky Group Aviation* ✈️\n\n📍 ¿Desde qué ciudad o aeropuerto deseas salir?"];
         }
         if ($parsed['is_question'] || $this->isHelpRequest($normalized)) {
             return $this->help($conversation, $flightRequest);
@@ -113,7 +113,7 @@ class FlightQuoteFlowHandler
 
             return [
                 'state' => $conversation->state === 'START' ? 'START' : $conversation->state,
-                'message' => 'Gracias por escribirnos. Este canal está enfocado exclusivamente en renta y cotización de vuelos privados. Si deseas cotizar un vuelo, con gusto te ayudo.',
+                'message' => 'ℹ️ Gracias por escribirnos. Este canal está enfocado exclusivamente en renta y cotización de vuelos privados. Si deseas cotizar un vuelo, con gusto te ayudo.',
             ];
         }
         if ($interpretation = $this->interpretMessage($conversation, $flightRequest, $message, $normalized)) {
@@ -143,15 +143,15 @@ class FlightQuoteFlowHandler
         }
 
         return match ($conversation->state) {
-            'START' => ['state' => 'ASK_ORIGIN', 'message' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?"],
+            'START' => ['state' => 'ASK_ORIGIN', 'message' => "👋 ¡Hola! Bienvenido a *Sky Group Aviation* ✈️\n\n📍 ¿Desde qué ciudad o aeropuerto deseas salir?"],
             'SHOW_SUMMARY', 'CONFIRM_REQUEST' => $this->confirmRequest($conversation, $flightRequest, $normalized),
             'EDIT_FIELD' => $this->chooseEdit($conversation, $flightRequest, $normalized),
             'SEARCH_FLIGHTS' => $this->searchFlights($flightRequest),
             'SHOW_RESULTS' => $this->showResults($flightRequest),
             'SELECT_AIRCRAFT' => $this->selectAircraft($flightRequest, $message),
             'CREATE_QUOTE' => $this->createQuote($flightRequest),
-            'FINISHED' => ['state' => 'FINISHED', 'message' => 'Tu cotización ya fue registrada. Escribe asesor si necesitas hacer cambios.'],
-            'CANCELLED' => ['state' => 'CANCELLED', 'message' => 'Esta solicitud fue cancelada.'],
+            'FINISHED' => ['state' => 'FINISHED', 'message' => '✅ Tu cotización ya fue registrada. Escribe asesor si necesitas hacer cambios.'],
+            'CANCELLED' => ['state' => 'CANCELLED', 'message' => '✅ Esta solicitud fue cancelada.'],
             default => $this->recoverState($conversation, $flightRequest),
         };
     }
@@ -1013,15 +1013,15 @@ class FlightQuoteFlowHandler
     private function quoteStatus(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest): array
     {
         if (! $this->hasCapturedData($flightRequest)) {
-            return ['state' => $conversation->state, 'message' => 'Aún no tengo una cotización enviada para este número. Puedo ayudarte a iniciar una.'];
+            return ['state' => $conversation->state, 'message' => 'ℹ️ Aún no tengo una cotización enviada para este número. Puedo ayudarte a iniciar una.'];
         }
 
         if ($flightRequest->status === 'collecting') {
-            return $this->continueFromMissing($conversation, $flightRequest, 'Tu solicitud quedó incompleta. Sigamos desde aquí.');
+            return $this->continueFromMissing($conversation, $flightRequest, '📋 Tu solicitud quedó incompleta. Sigamos desde aquí.');
         }
 
         if ($flightRequest->status === 'cancelled') {
-            return ['state' => $conversation->state, 'message' => 'Esta solicitud aparece cancelada. Puedo ayudarte con una nueva cotización.'];
+            return ['state' => $conversation->state, 'message' => 'ℹ️ Esta solicitud aparece cancelada. Puedo ayudarte con una nueva cotización.'];
         }
 
         if ($flightRequest->status === 'quoted') {
@@ -1030,22 +1030,22 @@ class FlightQuoteFlowHandler
             return [
                 'state' => $conversation->state,
                 'message' => $reference
-                    ? "Tu cotización ya fue registrada con referencia {$reference}."
-                    : 'Tu cotización ya fue registrada.',
+                    ? "✅ Tu cotización ya fue registrada con referencia {$reference}."
+                    : '✅ Tu cotización ya fue registrada.',
             ];
         }
 
-        return ['state' => $conversation->state, 'message' => 'Tu solicitud está siendo revisada. En cuanto tengamos actualización, te contactamos.'];
+        return ['state' => $conversation->state, 'message' => '⏳ Tu solicitud está siendo revisada. En cuanto tengamos actualización, te contactamos.'];
     }
 
     /** @return array{state:string,message:string} */
     private function resumeQuote(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest): array
     {
         if (! $this->hasCapturedData($flightRequest)) {
-            return ['state' => 'ASK_ORIGIN', 'message' => 'Claro, iniciemos tu cotización. ¿Desde qué ciudad o aeropuerto deseas salir?'];
+            return ['state' => 'ASK_ORIGIN', 'message' => '✈️ Claro, iniciemos tu cotización. 📍 ¿Desde qué ciudad o aeropuerto deseas salir?'];
         }
 
-        return $this->continueFromMissing($conversation, $flightRequest, 'Claro, retomemos tu cotización.');
+        return $this->continueFromMissing($conversation, $flightRequest, '✈️ Claro, retomemos tu cotización.');
     }
 
     /** @return array{state:string,message:string} */
@@ -1105,7 +1105,7 @@ class FlightQuoteFlowHandler
         ];
         $conversation->update(['metadata' => $metadata]);
 
-        return $this->continueFromMissing($conversation, $flightRequest, 'Retomemos tu cotización desde un punto seguro.');
+        return $this->continueFromMissing($conversation, $flightRequest, '✈️ Retomemos tu cotización desde un punto seguro.');
     }
 
     private function hasCapturedData(WhatsAppFlightRequest $flightRequest): bool
@@ -1137,7 +1137,7 @@ class FlightQuoteFlowHandler
         if ($count >= 3) {
             return [
                 'state' => $state,
-                'message' => $error."\nPuedo conectarte con un asesor si prefieres continuar con ayuda humana. Si quieres seguir aquí, ".$this->prompt($state, $flightRequest),
+                'message' => $error."\n👨‍💼 Puedo conectarte con un asesor si prefieres continuar con ayuda humana. Si quieres seguir aquí, ".$this->prompt($state, $flightRequest),
             ];
         }
 
@@ -1158,10 +1158,10 @@ class FlightQuoteFlowHandler
     private function prompt(string $state, ?WhatsAppFlightRequest $flightRequest = null): string
     {
         if (! $flightRequest) {
-            return self::QUESTIONS[$state]['prompt'];
+            return $this->decoratePrompt($state, self::QUESTIONS[$state]['prompt']);
         }
 
-        return match ($state) {
+        $prompt = match ($state) {
             'ASK_DESTINATION' => $flightRequest->origin
                 ? "Perfecto, saliendo de {$flightRequest->origin}. ¿A dónde te gustaría volar?"
                 : self::QUESTIONS[$state]['prompt'],
@@ -1173,6 +1173,36 @@ class FlightQuoteFlowHandler
                 : self::QUESTIONS[$state]['prompt'],
             default => self::QUESTIONS[$state]['prompt'],
         };
+
+        return $this->decoratePrompt($state, $prompt);
+    }
+
+    private function decoratePrompt(string $state, string $prompt): string
+    {
+        if (preg_match('/^\p{So}/u', $prompt) === 1) {
+            return $prompt;
+        }
+
+        $emoji = match ($state) {
+            'ASK_ORIGIN' => '📍',
+            'ASK_DESTINATION' => '🛬',
+            'ASK_DEPARTURE_DATE', 'ASK_RETURN_DATE' => '📅',
+            'ASK_DEPARTURE_TIME', 'ASK_RETURN_TIME' => '🕐',
+            'ASK_TRIP_TYPE' => '✈️',
+            'ASK_LEGS' => '🛫',
+            'ASK_PASSENGERS' => '👥',
+            'ASK_AIRCRAFT_PREFERENCE' => '🛩️',
+            'ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS' => '✅',
+            'ASK_OTHER_SERVICES' => '🧳',
+            'ASK_NAME' => '👤',
+            'ASK_EMAIL' => '📧',
+            'ASK_COMPANY' => '📄',
+            'ASK_BUDGET' => '💵',
+            'ASK_NOTES' => '📋',
+            default => null,
+        };
+
+        return $emoji ? $emoji.' '.$prompt : $prompt;
     }
 
     /** @return array{state:string,message:string} */
@@ -1180,20 +1210,20 @@ class FlightQuoteFlowHandler
     {
         $state = $conversation->state;
         if (! isset(self::QUESTIONS[$state])) {
-            return ['state' => $state, 'message' => 'Escribe continuar para seguir.'];
+            return ['state' => $state, 'message' => '👉 Escribe continuar para seguir.'];
         }
 
         $message = match (self::QUESTIONS[$state]['type']) {
-            'date' => 'Puedes decir mañana, el próximo viernes o 2026-10-02.',
-            'time' => 'Puedes decirme algo como 8 de la noche, 8 pm o 20:00.',
-            'passengers' => 'Puedes decir 4, somos 4 o cuatro pasajeros.',
-            'boolean' => 'Responde sí o no.',
-            'trip' => 'Puedes decir sólo ida, ida y vuelta o multidestino.',
+            'date' => '📅 Puedes decir mañana, el próximo viernes o 2026-10-02.',
+            'time' => '🕐 Puedes decirme algo como 8 de la noche, 8 pm o 20:00.',
+            'passengers' => '👥 Puedes decir 4, somos 4 o cuatro pasajeros.',
+            'boolean' => '✅ Responde sí o no.',
+            'trip' => '✈️ Puedes decir sólo ida, ida y vuelta o multidestino.',
             'legs' => $this->legHelp($conversation, $flightRequest),
             'location' => $this->prompt($state, $flightRequest),
-            'email' => 'Escribe tu correo, por ejemplo nombre@correo.com.',
-            'optional' => 'Puedes responder el dato o decir no.',
-            default => 'Respóndeme con tus palabras.',
+            'email' => '📧 Escribe tu correo, por ejemplo nombre@correo.com.',
+            'optional' => 'ℹ️ Puedes responder el dato o decir no.',
+            default => '💬 Respóndeme con tus palabras.',
         };
 
         return ['state' => $state, 'message' => $message];
@@ -1206,11 +1236,11 @@ class FlightQuoteFlowHandler
         $from = $this->lastLegDestination($flightRequest);
 
         return match ($metadata['leg_capture']['step'] ?? null) {
-            'date' => 'Puedes decir mañana, el próximo viernes o 2026-10-02.',
-            'time' => 'Puedes decir 2 pm, 14:30 o por la mañana.',
+            'date' => '📅 Puedes decir mañana, el próximo viernes o 2026-10-02.',
+            'time' => '🕐 Puedes decir 2 pm, 14:30 o por la mañana.',
             default => $from
-                ? "Claro. Supongamos que después de {$from} quieres continuar a otra ciudad. Dime primero sólo el destino y seguimos paso a paso."
-                : 'Dime primero el siguiente destino y seguimos paso a paso.',
+                ? "🛫 Claro. Supongamos que después de {$from} quieres continuar a otra ciudad. Dime primero sólo el destino y seguimos paso a paso."
+                : '🛫 Dime primero el siguiente destino y seguimos paso a paso.',
         };
     }
 
@@ -2293,7 +2323,7 @@ class FlightQuoteFlowHandler
     /** @return array{state:string,message:string} */
     private function editMenu(): array
     {
-        return ['state' => 'EDIT_FIELD', 'message' => "¿Qué deseas modificar?\n1. Origen\n2. Destino\n3. Fecha\n4. Hora\n5. Pasajeros\n6. Viaje (incluye regreso/tramos)\n7. Aeronave\n8. Servicios y flexibilidad\n9. Datos personales\n10. Presupuesto\n11. Observaciones"];
+        return ['state' => 'EDIT_FIELD', 'message' => "📋 ¿Qué deseas modificar?\n1. Origen\n2. Destino\n3. Fecha\n4. Hora\n5. Pasajeros\n6. Viaje (incluye regreso/tramos)\n7. Aeronave\n8. Servicios y flexibilidad\n9. Datos personales\n10. Presupuesto\n11. Observaciones"];
     }
 
     /** @return array{state:string,message:string} */
@@ -2305,18 +2335,18 @@ class FlightQuoteFlowHandler
         if (in_array($choice, ['3', 'cancelar'], true)) {
             $flightRequest->update(['status' => 'cancelled']);
 
-            return ['state' => 'CANCELLED', 'message' => 'Solicitud cancelada. Escribe de nuevo si deseas iniciar otra cotización.'];
+            return ['state' => 'CANCELLED', 'message' => '✅ Solicitud cancelada. Escribe de nuevo si deseas iniciar otra cotización.'];
         }
         if (in_array($choice, ['1', 'si', 'si, solicitar cotizacion', 'solicitar cotizacion', 'confirmar', 'correcto', 'todo bien', 'adelante', 'enviala', 'enviar'], true)) {
             $invalidState = $this->invalidState($flightRequest);
             if ($invalidState) {
                 $conversation->update(['metadata' => [...($conversation->metadata ?? []), 'edit_steps' => []]]);
 
-                return $this->question($invalidState, 'Revisa este dato antes de confirmar.');
+                return $this->question($invalidState, '⚠️ Revisa este dato antes de confirmar.');
             }
             $flightRequest->update(['status' => 'confirmed', 'confirmed_at' => $flightRequest->confirmed_at ?? now()]);
 
-            return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Solicitud confirmada. Responde continuar para buscar opciones disponibles.'];
+            return ['state' => 'SEARCH_FLIGHTS', 'message' => '✅ Solicitud confirmada. Responde continuar para buscar opciones disponibles.'];
         }
 
         return $this->showSummary($flightRequest);
@@ -2383,12 +2413,12 @@ class FlightQuoteFlowHandler
             return $this->question('ASK_LEGS', null, $flightRequest);
         }
 
-        return ['state' => 'SHOW_SUMMARY', 'message' => $this->summaryMessage($flightRequest)."\n\n¿Todo está correcto para solicitar la cotización?"];
+        return ['state' => 'SHOW_SUMMARY', 'message' => $this->summaryMessage($flightRequest)."\n\n✅ ¿Todo está correcto para solicitar la cotización?"];
     }
 
     public function summaryMessage(WhatsAppFlightRequest $flightRequest): string
     {
-        $lines = ['Perfecto, esto es lo que tengo hasta ahora:', ''];
+        $lines = ['📋 Perfecto, esto es lo que tengo hasta ahora:', ''];
         $lines[] = '✈️ '.$this->routeLine($flightRequest);
         if ($flightRequest->trip_type) {
             $lines[] = '➡️ '.$this->tripTypeLabel($flightRequest->trip_type);
@@ -2434,7 +2464,7 @@ class FlightQuoteFlowHandler
             $lines[] = '💰 Presupuesto aproximado: '.number_format((float) $flightRequest->budget, 0).' USD';
         }
         if ($flightRequest->notes) {
-            $lines[] = 'Notas: '.Str::limit($flightRequest->notes, 120);
+            $lines[] = '📄 Notas: '.Str::limit($flightRequest->notes, 120);
         }
 
         return implode("\n", $lines);
@@ -2603,16 +2633,16 @@ class FlightQuoteFlowHandler
     private function invalidMessage(string $type, string $label): string
     {
         return match ($type) {
-            'date' => 'No entendí la fecha.',
-            'time' => 'No entendí la hora.',
-            'location' => 'No alcancé a identificar una ciudad o aeropuerto. ¿Me lo compartes nuevamente?',
-            'passengers' => 'Necesito cuántas personas viajan.',
-            'count' => 'Necesito un número para '.$this->normalize($label).'.',
-            'boolean' => 'Necesito una respuesta de sí o no.',
-            'email' => 'Ese correo no parece válido.',
-            'trip' => 'Necesito saber si es sólo ida, ida y vuelta o multidestino.',
-            'money' => "No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.",
-            default => 'No entendí ese dato.',
+            'date' => '⚠️ No entendí la fecha.',
+            'time' => '⚠️ No entendí la hora.',
+            'location' => '⚠️ No alcancé a identificar una ciudad o aeropuerto. ¿Me lo compartes nuevamente?',
+            'passengers' => '⚠️ Necesito cuántas personas viajan.',
+            'count' => '⚠️ Necesito un número para '.$this->normalize($label).'.',
+            'boolean' => '⚠️ Necesito una respuesta de sí o no.',
+            'email' => '⚠️ Ese correo no parece válido.',
+            'trip' => '⚠️ Necesito saber si es sólo ida, ida y vuelta o multidestino.',
+            'money' => "⚠️ No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.",
+            default => '⚠️ No entendí ese dato.',
         };
     }
 
@@ -2731,7 +2761,7 @@ class FlightQuoteFlowHandler
 
             return [
                 'state' => 'TRANSFER_TO_HUMAN',
-                'message' => 'No pude consultar disponibilidad en este momento. Te conectaremos con un asesor para continuar.',
+                'message' => '⚠️ No pude consultar disponibilidad en este momento. Te conectaremos con un asesor para continuar.',
             ];
         }
 
@@ -2743,7 +2773,7 @@ class FlightQuoteFlowHandler
 
             return [
                 'state' => 'TRANSFER_TO_HUMAN',
-                'message' => 'No encontré aeronaves disponibles para esas fechas. Te conectaremos con un asesor para revisar alternativas.',
+                'message' => '🔎 No encontré aeronaves disponibles para esas fechas. Te conectaremos con un asesor para revisar alternativas.',
             ];
         }
 
@@ -2752,7 +2782,7 @@ class FlightQuoteFlowHandler
             'status' => 'searched',
         ]);
 
-        return ['state' => 'SHOW_RESULTS', 'message' => 'Encontramos opciones compatibles con tu solicitud. Responde continuar para verlas.'];
+        return ['state' => 'SHOW_RESULTS', 'message' => '✅ Encontramos opciones compatibles con tu solicitud. Responde continuar para verlas.'];
     }
 
     private function sanitizeTechnicalMessage(string $message): string
@@ -2774,7 +2804,7 @@ class FlightQuoteFlowHandler
         if ($results->isEmpty()) {
             return [
                 'state' => 'SEARCH_FLIGHTS',
-                'message' => 'Responde continuar para buscar nuevas opciones disponibles para tu ruta.',
+                'message' => '👉 Responde continuar para buscar nuevas opciones disponibles para tu ruta.',
             ];
         }
 
@@ -2791,7 +2821,7 @@ class FlightQuoteFlowHandler
 
         return [
             'state' => 'SELECT_AIRCRAFT',
-            'message' => "Opciones disponibles:\n{$options}\n\nResponde con el numero de la aeronave que prefieres.",
+            'message' => "🛩️ Opciones disponibles:\n{$options}\n\n👉 Responde con el numero de la aeronave que prefieres.",
         ];
     }
 
@@ -2804,14 +2834,14 @@ class FlightQuoteFlowHandler
         $results = array_values($flightRequest->search_results ?? []);
 
         if (! $selectedIndex || ! isset($results[$selectedIndex - 1])) {
-            return ['state' => 'SELECT_AIRCRAFT', 'message' => 'Selecciona una opcion valida respondiendo con el numero de la aeronave.'];
+            return ['state' => 'SELECT_AIRCRAFT', 'message' => '⚠️ Selecciona una opcion valida respondiendo con el numero de la aeronave.'];
         }
 
         $selected = $results[$selectedIndex - 1];
         $aircraftId = (string) ($selected['aircraft_id'] ?? '');
 
         if (! Str::isUuid($aircraftId)) {
-            return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Esa opción no tiene identificador válido. Responde continuar para buscar opciones actualizadas.'];
+            return ['state' => 'SEARCH_FLIGHTS', 'message' => '⚠️ Esa opción no tiene identificador válido. Responde continuar para buscar opciones actualizadas.'];
         }
 
         try {
@@ -2821,7 +2851,7 @@ class FlightQuoteFlowHandler
 
             return [
                 'state' => 'TRANSFER_TO_HUMAN',
-                'message' => 'No pude revalidar la disponibilidad en este momento. Te conectaremos con un asesor.',
+                'message' => '⚠️ No pude revalidar la disponibilidad en este momento. Te conectaremos con un asesor.',
             ];
         }
 
@@ -2837,7 +2867,7 @@ class FlightQuoteFlowHandler
 
             return [
                 'state' => 'SHOW_RESULTS',
-                'message' => 'Esa aeronave ya no se encuentra disponible. Responde continuar para ver alternativas actualizadas.',
+                'message' => '⚠️ Esa aeronave ya no se encuentra disponible. Responde continuar para ver alternativas actualizadas.',
             ];
         }
 
@@ -2850,7 +2880,7 @@ class FlightQuoteFlowHandler
             'status' => 'aircraft_selected',
         ]);
 
-        return ['state' => 'CREATE_QUOTE', 'message' => 'Responde continuar para preparar tu cotización con la aeronave seleccionada.'];
+        return ['state' => 'CREATE_QUOTE', 'message' => '👉 Responde continuar para preparar tu cotización con la aeronave seleccionada.'];
     }
 
     /**
@@ -2865,7 +2895,7 @@ class FlightQuoteFlowHandler
 
             return [
                 'state' => 'TRANSFER_TO_HUMAN',
-                'message' => 'No pude completar la cotización en este momento. Podemos intentar nuevamente o comunicarte con un asesor.',
+                'message' => '⚠️ No pude completar la cotización en este momento. Podemos intentar nuevamente o comunicarte con un asesor.',
             ];
         }
 
@@ -2882,8 +2912,8 @@ class FlightQuoteFlowHandler
         return [
             'state' => 'FINISHED',
             'message' => $acceptedQuoteId
-                ? "Listo. Registramos tu cotización oficial con ID {$acceptedQuoteId}."
-                : 'Listo. Registramos tu solicitud de vuelo en el backend oficial.',
+                ? "✅ Listo. Registramos tu cotización oficial con ID {$acceptedQuoteId}."
+                : '✅ Listo. Registramos tu solicitud de vuelo en el backend oficial.',
         ];
     }
 

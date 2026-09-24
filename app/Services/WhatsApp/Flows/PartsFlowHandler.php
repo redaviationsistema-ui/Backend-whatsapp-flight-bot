@@ -16,7 +16,7 @@ class PartsFlowHandler
 
         return [
             'state' => 'PARTS_ASK_PART_NUMBER',
-            'message' => "Partes y refacciones\n\nPor favor indícame el número de parte (P/N) que necesitas.",
+            'message' => "🔧 Partes y refacciones\n\n🔎 Por favor indícame el número de parte (P/N) que necesitas.",
         ];
     }
 
@@ -26,7 +26,7 @@ class PartsFlowHandler
         $normalized = $this->normalize($message);
 
         if ($this->wantsHuman($normalized)) {
-            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => 'Te conectaremos con un asesor para continuar con tu solicitud.'];
+            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => '👨‍💼 Te conectaremos con un asesor para continuar con tu solicitud.'];
         }
 
         return match ($conversation->state) {
@@ -43,7 +43,7 @@ class PartsFlowHandler
             'PARTS_EDIT_QUANTITY' => $this->captureQuantity($conversation, $normalized),
             'PARTS_EDIT_CONDITION' => $this->captureCondition($conversation, $normalized),
             'PARTS_EDIT_COMMENTS' => $this->captureComments($conversation, $message),
-            'PARTS_COMPLETED' => ['state' => 'PARTS_COMPLETED', 'message' => 'Tu solicitud de parte ya fue registrada. Escribe "menu" para volver al menú principal.'],
+            'PARTS_COMPLETED' => ['state' => 'PARTS_COMPLETED', 'message' => '✅ Tu solicitud de parte ya fue registrada. Escribe "menu" para volver al menú principal.'],
             default => $this->start($conversation),
         };
     }
@@ -68,7 +68,7 @@ class PartsFlowHandler
 
         return [
             'state' => 'MAIN_MENU',
-            'message' => "Solicitud de parte cancelada.\n\nVolvimos al menú principal.",
+            'message' => "✅ Solicitud de parte cancelada.\n\nVolvimos al menú principal.",
         ];
     }
 
@@ -80,13 +80,13 @@ class PartsFlowHandler
         if ($partNumber === '') {
             return [
                 'state' => $conversation->state,
-                'message' => 'Por favor indícame el número de parte (P/N) que necesitas.',
+                'message' => '🔎 Por favor indícame el número de parte (P/N) que necesitas.',
             ];
         }
         if (strlen($partNumber) > 120) {
             return [
                 'state' => $conversation->state,
-                'message' => 'El P/N es demasiado largo. Envíalo en máximo 120 caracteres.',
+                'message' => '⚠️ El P/N es demasiado largo. Envíalo en máximo 120 caracteres.',
             ];
         }
 
@@ -94,7 +94,7 @@ class PartsFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'PARTS_ASK_DESCRIPTION'),
-            'message' => "¿Tienes una descripción de la pieza?\n\nSi no la tienes, escribe \"no\".",
+            'message' => "📄 ¿Tienes una descripción de la pieza?\n\nSi no la tienes, escribe \"no\".",
         ];
     }
 
@@ -105,14 +105,14 @@ class PartsFlowHandler
         if ($description !== null && strlen($description) > 1000) {
             return [
                 'state' => $conversation->state,
-                'message' => 'La descripción es demasiado larga. Envíala en máximo 1000 caracteres.',
+                'message' => '⚠️ La descripción es demasiado larga. Envíala en máximo 1000 caracteres.',
             ];
         }
         $this->mergeContext($conversation, ['description' => $description]);
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'PARTS_ASK_QUANTITY'),
-            'message' => '¿Qué cantidad necesitas?',
+            'message' => '📦 ¿Qué cantidad necesitas?',
         ];
     }
 
@@ -124,7 +124,7 @@ class PartsFlowHandler
         if ($quantity === null) {
             return [
                 'state' => $conversation->state,
-                'message' => 'Indícame una cantidad válida, mínimo 1.',
+                'message' => '⚠️ Indícame una cantidad válida, mínimo 1.',
             ];
         }
 
@@ -144,7 +144,7 @@ class PartsFlowHandler
         if ($condition === null) {
             return [
                 'state' => $conversation->state,
-                'message' => "Selecciona una condición válida.\n\n".$this->conditionPrompt(),
+                'message' => "⚠️ Selecciona una condición válida.\n\n".$this->conditionPrompt(),
             ];
         }
 
@@ -152,7 +152,7 @@ class PartsFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'PARTS_ASK_COMMENTS'),
-            'message' => "¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\".",
+            'message' => "📄 ¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\".",
         ];
     }
 
@@ -163,7 +163,7 @@ class PartsFlowHandler
         if ($comments !== null && strlen($comments) > 1000) {
             return [
                 'state' => $conversation->state,
-                'message' => 'Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
+                'message' => '⚠️ Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
             ];
         }
 
@@ -182,7 +182,7 @@ class PartsFlowHandler
             in_array($normalized, ['1', 'si', 'sí', 'confirmar', 'registrar'], true) => $this->confirm($conversation),
             in_array($normalized, ['2', 'editar'], true) => [
                 'state' => 'PARTS_EDIT_FIELD',
-                'message' => "¿Qué deseas modificar?\n\n1. Número de parte\n2. Descripción\n3. Cantidad\n4. Condición\n5. Comentarios\n6. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Número de parte\n2. Descripción\n3. Cantidad\n4. Condición\n5. Comentarios\n6. Volver",
             ],
             in_array($normalized, ['3', 'cancelar'], true) => $this->cancel($conversation),
             default => ['state' => 'PARTS_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
@@ -193,15 +193,15 @@ class PartsFlowHandler
     private function handleEditChoice(WhatsAppConversation $conversation, string $normalized): array
     {
         return match ($normalized) {
-            '1' => ['state' => 'PARTS_EDIT_PART_NUMBER', 'message' => 'Indícame el nuevo número de parte (P/N).'],
-            '2' => ['state' => 'PARTS_EDIT_DESCRIPTION', 'message' => "¿Tienes una descripción de la pieza?\n\nSi no la tienes, escribe \"no\"."],
-            '3' => ['state' => 'PARTS_EDIT_QUANTITY', 'message' => '¿Qué cantidad necesitas?'],
+            '1' => ['state' => 'PARTS_EDIT_PART_NUMBER', 'message' => '🔎 Indícame el nuevo número de parte (P/N).'],
+            '2' => ['state' => 'PARTS_EDIT_DESCRIPTION', 'message' => "📄 ¿Tienes una descripción de la pieza?\n\nSi no la tienes, escribe \"no\"."],
+            '3' => ['state' => 'PARTS_EDIT_QUANTITY', 'message' => '📦 ¿Qué cantidad necesitas?'],
             '4' => ['state' => 'PARTS_EDIT_CONDITION', 'message' => $this->conditionPrompt()],
-            '5' => ['state' => 'PARTS_EDIT_COMMENTS', 'message' => "¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\"."],
+            '5' => ['state' => 'PARTS_EDIT_COMMENTS', 'message' => "📄 ¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\"."],
             '6' => ['state' => 'PARTS_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
             default => [
                 'state' => 'PARTS_EDIT_FIELD',
-                'message' => "¿Qué deseas modificar?\n\n1. Número de parte\n2. Descripción\n3. Cantidad\n4. Condición\n5. Comentarios\n6. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Número de parte\n2. Descripción\n3. Cantidad\n4. Condición\n5. Comentarios\n6. Volver",
             ],
         };
     }
@@ -229,7 +229,7 @@ class PartsFlowHandler
 
         return [
             'state' => 'PARTS_COMPLETED',
-            'message' => "Listo. Registramos tu solicitud de parte con ID {$partRequestId}.\n\nUn asesor podrá darle seguimiento.\n\nEscribe \"menu\" para volver al menú principal.",
+            'message' => "✅ Listo. Registramos tu solicitud de parte con ID {$partRequestId}.\n\n👨‍💼 Un asesor podrá darle seguimiento.\n\nEscribe \"menu\" para volver al menú principal.",
         ];
     }
 
@@ -240,14 +240,14 @@ class PartsFlowHandler
 
     private function conditionPrompt(): string
     {
-        return "¿Qué condición requieres?\n\n1. New\n2. New Surplus\n3. Overhauled\n4. Serviceable\n5. As Removed\n6. Exchange\n7. Cualquier condición disponible";
+        return "📦 ¿Qué condición requieres?\n\n1. New\n2. New Surplus\n3. Overhauled\n4. Serviceable\n5. As Removed\n6. Exchange\n7. Cualquier condición disponible";
     }
 
     private function summaryMessage(WhatsAppConversation $conversation): string
     {
         $context = $this->context($conversation);
 
-        return "Resumen de solicitud de parte\n\n"
+        return "📋 Resumen de solicitud de parte\n\n"
             .'P/N: '.$context['part_number']."\n"
             .'Descripción: '.($context['description'] ?: 'Sin descripción')."\n"
             .'Cantidad: '.$context['quantity']."\n"

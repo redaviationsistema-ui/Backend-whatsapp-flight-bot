@@ -118,7 +118,7 @@ class WhatsAppInformationFlowTest extends TestCase
         $cancel = $this->answer($flight, 'cancelar');
 
         $this->assertSame('MAIN_MENU', $cancel['state']);
-        $this->assertSame('Volvimos al menú principal.', $cancel['message']);
+        $this->assertSame('✅ Volvimos al menú principal.', $cancel['message']);
         $this->assertNull($flight->conversation->refresh()->metadata);
     }
 

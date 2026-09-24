@@ -155,7 +155,7 @@ class WhatsAppFlowRouter
 
             return [
                 'state' => self::MainMenu,
-                'message' => "Solicitud cancelada.\n\nVolvimos al menú principal.\n\n".$this->mainMenuMessage(),
+                'message' => "✅ Solicitud cancelada.\n\nVolvimos al menú principal.\n\n".$this->mainMenuMessage(),
             ];
         }
 
@@ -224,7 +224,7 @@ class WhatsAppFlowRouter
 
     public function mainMenuMessage(): string
     {
-        return "¡Hola! Bienvenido a Sky Group Aviation ✈️\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor";
+        return "👋 ¡Hola! Bienvenido a *Sky Group Aviation* ✈️\n\n¿En qué podemos ayudarte?\n\n✈️ 1️⃣ Cotización de vuelo\n🔧 2️⃣ Partes y refacciones\n⚙️ 3️⃣ Motores\n🎧 4️⃣ Atención / soporte\nℹ️ 5️⃣ Información\n👨‍💼 6️⃣ Hablar con un asesor\n\n👉 Responde con el número de la opción.";
     }
 
     private function routeMainMenuOption(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $normalized): array
@@ -363,12 +363,12 @@ class WhatsAppFlowRouter
         if ($this->isAdvisorEntry($normalized)) {
             $this->clearPendingSectionChange($conversation);
 
-            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => 'Te conectaremos con un asesor para continuar con tu solicitud.'];
+            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => '👨‍💼 Te conectaremos con un asesor para continuar con tu solicitud.'];
         }
 
         return [
             'state' => self::ConfirmSectionChange,
-            'message' => "Por favor selecciona:\n\n1. Sí, cambiar\n2. No, continuar",
+            'message' => "⚠️ Por favor selecciona:\n\n1. Sí, cambiar\n2. No, continuar",
         ];
     }
 
@@ -426,7 +426,7 @@ class WhatsAppFlowRouter
 
         return [
             'state' => $fromState,
-            'message' => 'Continuamos con '.$this->sectionLabel($fromSection).'.',
+            'message' => '✅ Continuamos con '.$this->sectionLabel($fromSection).'.',
         ];
     }
 
@@ -521,7 +521,7 @@ class WhatsAppFlowRouter
 
     private function sectionChangePrompt(string $fromSection, string $toSection): string
     {
-        return 'Tienes un proceso de '.$this->sectionLabel($fromSection)." en curso.\n\n"
+        return '⚠️ Tienes un proceso de '.$this->sectionLabel($fromSection)." en curso.\n\n"
             .'¿Deseas cambiar a '.$this->sectionLabel($toSection)."?\n\n"
             ."1. Sí, cambiar\n2. No, continuar donde estaba";
     }

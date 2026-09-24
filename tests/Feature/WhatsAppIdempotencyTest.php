@@ -280,7 +280,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertSame($origin, $flight->origin);
         $this->assertNull($flight->destination);
         $this->assertSame('ASK_DESTINATION', $conversation->refresh()->state);
-        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.origin', 'body' => "Perfecto, saliendo de {$origin}. ¿A dónde te gustaría volar?"]);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.origin', 'body' => "🛬 Perfecto, saliendo de {$origin}. ¿A dónde te gustaría volar?"]);
 
         $this->webhook($destinationMessage)->assertOk();
         $this->webhook($originMessage)->assertOk();
@@ -359,7 +359,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.hola',
             'direction' => 'outbound',
-            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor",
+            'body' => "👋 ¡Hola! Bienvenido a *Sky Group Aviation* ✈️\n\n¿En qué podemos ayudarte?\n\n✈️ 1️⃣ Cotización de vuelo\n🔧 2️⃣ Partes y refacciones\n⚙️ 3️⃣ Motores\n🎧 4️⃣ Atención / soporte\nℹ️ 5️⃣ Información\n👨‍💼 6️⃣ Hablar con un asesor\n\n👉 Responde con el número de la opción.",
         ]);
         $this->assertDatabaseMissing('whats_app_messages', ['body' => '¿Cuál es el destino?']);
         Http::assertSentCount(1);
@@ -385,7 +385,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNull($flight->refresh()->departure_date);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.past-date',
-            'body' => "Esa fecha ya pasó. ¿Qué otra fecha tienes en mente?\nPerfecto, Querétaro → Cancún. ¿Para qué día tienes pensado viajar?",
+            'body' => "Esa fecha ya pasó. ¿Qué otra fecha tienes en mente?\n📅 Perfecto, Querétaro → Cancún. ¿Para qué día tienes pensado viajar?",
         ]);
     }
 
@@ -409,7 +409,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertSame('2026-10-02', $flight->refresh()->departure_date->toDateString());
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.future-date',
-            'body' => '¿A qué hora te gustaría salir?',
+            'body' => '🕐 ¿A qué hora te gustaría salir?',
         ]);
     }
 
@@ -432,7 +432,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNull($flight->refresh()->departure_date);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.help',
-            'body' => 'Puedes decir mañana, el próximo viernes o 2026-10-02.',
+            'body' => '📅 Puedes decir mañana, el próximo viernes o 2026-10-02.',
         ]);
     }
 
@@ -561,7 +561,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNull($flight->destination);
         $this->assertSame('collecting', $flight->status);
         $this->assertDatabaseCount('whats_app_flight_requests', 1);
-        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.new-quote', 'body' => 'Claro, iniciemos una nueva cotización. ¿Desde qué ciudad o aeropuerto deseas salir?']);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.new-quote', 'body' => '✈️ Claro, iniciemos una nueva cotización. 📍 ¿Desde qué ciudad o aeropuerto deseas salir?']);
     }
 
     public function test_quote_status_reports_real_state_without_resetting_request(): void
@@ -582,7 +582,7 @@ class WhatsAppIdempotencyTest extends TestCase
 
         $this->assertSame('FINISHED', $conversation->refresh()->state);
         $this->assertSame('Toluca', $conversation->flightRequest->origin);
-        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.status', 'body' => 'Tu cotización ya fue registrada con referencia QUOTE-99.']);
+        $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.status', 'body' => '✅ Tu cotización ya fue registrada con referencia QUOTE-99.']);
     }
 
     public function test_quote_intent_continues_from_missing_data_instead_of_restart(): void
@@ -676,7 +676,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNotNull(WhatsAppMessage::query()->where('message_id', 'in.invalid-budget')->sole()->processed_at);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.invalid-budget',
-            'body' => "No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.\n¿Tienes un presupuesto aproximado?",
+            'body' => "⚠️ No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.\n💵 ¿Tienes un presupuesto aproximado?",
         ]);
     }
 
@@ -728,7 +728,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNull($flight->refresh()->passengers);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.invalid-passengers',
-            'body' => "Necesito cuántas personas viajan.\n¿Cuántas personas viajan?",
+            'body' => "⚠️ Necesito cuántas personas viajan.\n👥 ¿Cuántas personas viajan?",
         ]);
     }
 
@@ -764,7 +764,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertNull($flight->refresh()->client_email);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.invalid-email',
-            'body' => "Ese correo no parece válido.\n¿Cuál es tu correo electrónico?",
+            'body' => "⚠️ Ese correo no parece válido.\n📧 ¿Cuál es tu correo electrónico?",
         ]);
     }
 

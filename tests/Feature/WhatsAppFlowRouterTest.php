@@ -42,7 +42,7 @@ class WhatsAppFlowRouterTest extends TestCase
         $result = app(WhatsAppChatbotService::class)->handleIncomingMessage($flight->conversation, $flight, '.');
 
         $this->assertSame('MAIN_MENU', $result['state']);
-        $this->assertStringContainsString('1. Cotización de vuelo', $result['message']);
+        $this->assertStringContainsString('✈️ 1️⃣ Cotización de vuelo', $result['message']);
         $this->assertNull($flight->conversation->refresh()->metadata);
     }
 

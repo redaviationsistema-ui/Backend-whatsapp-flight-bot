@@ -38,7 +38,7 @@ class AdvisorFlowHandler
             'ADVISOR_EDIT_REASON' => $this->captureReason($conversation, $normalized),
             'ADVISOR_EDIT_REFERENCE' => $this->captureReference($conversation, $message),
             'ADVISOR_EDIT_COMMENTS' => $this->captureComments($conversation, $message),
-            'ADVISOR_COMPLETED' => ['state' => 'TRANSFER_TO_HUMAN', 'message' => 'La conversación fue enviada a un asesor.'],
+            'ADVISOR_COMPLETED' => ['state' => 'TRANSFER_TO_HUMAN', 'message' => '👨‍💼 La conversación fue enviada a un asesor.'],
             default => $this->start($conversation),
         };
     }
@@ -63,7 +63,7 @@ class AdvisorFlowHandler
 
         return [
             'state' => 'MAIN_MENU',
-            'message' => "Solicitud de asesor cancelada.\n\nVolvimos al menú principal.",
+            'message' => "✅ Solicitud de asesor cancelada.\n\nVolvimos al menú principal.",
         ];
     }
 
@@ -75,7 +75,7 @@ class AdvisorFlowHandler
         if ($reason === null) {
             return [
                 'state' => $conversation->state,
-                'message' => "Selecciona un motivo válido.\n\n".$this->reasonPrompt(),
+                'message' => "⚠️ Selecciona un motivo válido.\n\n".$this->reasonPrompt(),
             ];
         }
 
@@ -83,7 +83,7 @@ class AdvisorFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'ADVISOR_ASK_REFERENCE'),
-            'message' => "¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\".",
+            'message' => "📄 ¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\".",
         ];
     }
 
@@ -94,7 +94,7 @@ class AdvisorFlowHandler
         if ($reference !== null && strlen($reference) > 120) {
             return [
                 'state' => $conversation->state,
-                'message' => 'La referencia es demasiado larga. Envíala en máximo 120 caracteres.',
+                'message' => '⚠️ La referencia es demasiado larga. Envíala en máximo 120 caracteres.',
             ];
         }
 
@@ -102,7 +102,7 @@ class AdvisorFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'ADVISOR_ASK_COMMENTS'),
-            'message' => 'Cuéntanos brevemente qué necesitas del asesor.',
+            'message' => '💬 Cuéntanos brevemente qué necesitas del asesor.',
         ];
     }
 
@@ -114,13 +114,13 @@ class AdvisorFlowHandler
         if ($comments === '') {
             return [
                 'state' => $conversation->state,
-                'message' => 'Cuéntanos brevemente qué necesitas del asesor.',
+                'message' => '💬 Cuéntanos brevemente qué necesitas del asesor.',
             ];
         }
         if (strlen($comments) > 1000) {
             return [
                 'state' => $conversation->state,
-                'message' => 'Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
+                'message' => '⚠️ Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
             ];
         }
 
@@ -139,7 +139,7 @@ class AdvisorFlowHandler
             in_array($normalized, ['1', 'si', 'sí', 'confirmar', 'registrar'], true) => $this->confirm($conversation),
             in_array($normalized, ['2', 'editar'], true) => [
                 'state' => 'ADVISOR_EDIT_MENU',
-                'message' => "¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Comentarios\n4. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Comentarios\n4. Volver",
             ],
             in_array($normalized, ['3', 'cancelar'], true) => $this->cancel($conversation),
             default => ['state' => 'ADVISOR_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
@@ -151,12 +151,12 @@ class AdvisorFlowHandler
     {
         return match ($normalized) {
             '1' => ['state' => 'ADVISOR_EDIT_REASON', 'message' => $this->reasonPrompt()],
-            '2' => ['state' => 'ADVISOR_EDIT_REFERENCE', 'message' => "¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\"."],
-            '3' => ['state' => 'ADVISOR_EDIT_COMMENTS', 'message' => 'Cuéntanos brevemente qué necesitas del asesor.'],
+            '2' => ['state' => 'ADVISOR_EDIT_REFERENCE', 'message' => "📄 ¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\"."],
+            '3' => ['state' => 'ADVISOR_EDIT_COMMENTS', 'message' => '💬 Cuéntanos brevemente qué necesitas del asesor.'],
             '4' => ['state' => 'ADVISOR_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
             default => [
                 'state' => 'ADVISOR_EDIT_MENU',
-                'message' => "¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Comentarios\n4. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Comentarios\n4. Volver",
             ],
         };
     }
@@ -187,7 +187,7 @@ class AdvisorFlowHandler
 
         return [
             'state' => 'TRANSFER_TO_HUMAN',
-            'message' => "Listo. Registramos tu solicitud con ID {$advisorRequestId}.\n\nLa conversación fue enviada a un asesor.",
+            'message' => "✅ Listo. Registramos tu solicitud con ID {$advisorRequestId}.\n\n👨‍💼 La conversación fue enviada a un asesor.",
         ];
     }
 
@@ -198,14 +198,14 @@ class AdvisorFlowHandler
 
     private function reasonPrompt(): string
     {
-        return "Hablar con un asesor\n\n¿Sobre qué tema necesitas ayuda?\n\n1. Cotización de vuelo\n2. Reserva\n3. Pago\n4. Contrato / documento\n5. Partes y refacciones\n6. Motores\n7. Soporte técnico\n8. Otro";
+        return "👨‍💼 Hablar con un asesor\n\n¿Sobre qué tema necesitas ayuda?\n\n1. Cotización de vuelo\n2. Reserva\n3. Pago\n4. Contrato / documento\n5. Partes y refacciones\n6. Motores\n7. Soporte técnico\n8. Otro";
     }
 
     private function summaryMessage(WhatsAppConversation $conversation): string
     {
         $context = $this->context($conversation);
 
-        return "Resumen para asesor\n\n"
+        return "📋 Resumen para asesor\n\n"
             .'Motivo: '.$this->reasonLabel($context['reason'])."\n"
             .'Referencia: '.($context['reference'] ?: '—')."\n"
             .'Comentarios: '.$context['comments']."\n\n"

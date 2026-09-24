@@ -146,7 +146,7 @@ class WhatsAppWebhookTest extends TestCase
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.hola',
             'direction' => 'outbound',
-            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor",
+            'body' => "👋 ¡Hola! Bienvenido a *Sky Group Aviation* ✈️\n\n¿En qué podemos ayudarte?\n\n✈️ 1️⃣ Cotización de vuelo\n🔧 2️⃣ Partes y refacciones\n⚙️ 3️⃣ Motores\n🎧 4️⃣ Atención / soporte\nℹ️ 5️⃣ Información\n👨‍💼 6️⃣ Hablar con un asesor\n\n👉 Responde con el número de la opción.",
         ]);
     }
 

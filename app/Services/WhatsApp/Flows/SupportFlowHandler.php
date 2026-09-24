@@ -26,7 +26,7 @@ class SupportFlowHandler
         $normalized = $this->normalize($message);
 
         if ($this->wantsHuman($normalized)) {
-            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => 'Te conectaremos con un asesor para continuar con tu solicitud.'];
+            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => '👨‍💼 Te conectaremos con un asesor para continuar con tu solicitud.'];
         }
 
         return match ($conversation->state) {
@@ -43,7 +43,7 @@ class SupportFlowHandler
             'SUPPORT_EDIT_DESCRIPTION' => $this->captureDescription($conversation, $message),
             'SUPPORT_EDIT_PRIORITY' => $this->capturePriority($conversation, $normalized),
             'SUPPORT_EDIT_COMMENTS' => $this->captureComments($conversation, $message),
-            'SUPPORT_COMPLETED' => ['state' => 'SUPPORT_COMPLETED', 'message' => 'Tu solicitud de soporte ya fue registrada. Escribe "menu" para volver al menú principal.'],
+            'SUPPORT_COMPLETED' => ['state' => 'SUPPORT_COMPLETED', 'message' => '✅ Tu solicitud de soporte ya fue registrada. Escribe "menu" para volver al menú principal.'],
             default => $this->start($conversation),
         };
     }
@@ -68,7 +68,7 @@ class SupportFlowHandler
 
         return [
             'state' => 'MAIN_MENU',
-            'message' => "Solicitud de soporte cancelada.\n\nVolvimos al menú principal.",
+            'message' => "✅ Solicitud de soporte cancelada.\n\nVolvimos al menú principal.",
         ];
     }
 
@@ -80,7 +80,7 @@ class SupportFlowHandler
         if ($reason === null) {
             return [
                 'state' => $conversation->state,
-                'message' => "Selecciona un motivo válido.\n\n".$this->reasonPrompt(),
+                'message' => "⚠️ Selecciona un motivo válido.\n\n".$this->reasonPrompt(),
             ];
         }
 
@@ -88,7 +88,7 @@ class SupportFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'SUPPORT_ASK_REFERENCE'),
-            'message' => "¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\".",
+            'message' => "📄 ¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\".",
         ];
     }
 
@@ -99,7 +99,7 @@ class SupportFlowHandler
         if ($reference !== null && strlen($reference) > 120) {
             return [
                 'state' => $conversation->state,
-                'message' => 'La referencia es demasiado larga. Envíala en máximo 120 caracteres.',
+                'message' => '⚠️ La referencia es demasiado larga. Envíala en máximo 120 caracteres.',
             ];
         }
 
@@ -107,7 +107,7 @@ class SupportFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'SUPPORT_ASK_DESCRIPTION'),
-            'message' => 'Describe brevemente cómo podemos ayudarte.',
+            'message' => '🎧 Describe brevemente cómo podemos ayudarte.',
         ];
     }
 
@@ -119,13 +119,13 @@ class SupportFlowHandler
         if ($description === '') {
             return [
                 'state' => $conversation->state,
-                'message' => 'Describe brevemente cómo podemos ayudarte.',
+                'message' => '🎧 Describe brevemente cómo podemos ayudarte.',
             ];
         }
         if (strlen($description) > 1000) {
             return [
                 'state' => $conversation->state,
-                'message' => 'La descripción es demasiado larga. Envíala en máximo 1000 caracteres.',
+                'message' => '⚠️ La descripción es demasiado larga. Envíala en máximo 1000 caracteres.',
             ];
         }
 
@@ -145,7 +145,7 @@ class SupportFlowHandler
         if ($priority === null) {
             return [
                 'state' => $conversation->state,
-                'message' => "Selecciona una prioridad válida.\n\n".$this->priorityPrompt(),
+                'message' => "⚠️ Selecciona una prioridad válida.\n\n".$this->priorityPrompt(),
             ];
         }
 
@@ -153,7 +153,7 @@ class SupportFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'SUPPORT_ASK_COMMENTS'),
-            'message' => "¿Deseas agregar algún comentario adicional?\n\nSi no, escribe \"no\".",
+            'message' => "📄 ¿Deseas agregar algún comentario adicional?\n\nSi no, escribe \"no\".",
         ];
     }
 
@@ -164,7 +164,7 @@ class SupportFlowHandler
         if ($comments !== null && strlen($comments) > 1000) {
             return [
                 'state' => $conversation->state,
-                'message' => 'Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
+                'message' => '⚠️ Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
             ];
         }
 
@@ -183,7 +183,7 @@ class SupportFlowHandler
             in_array($normalized, ['1', 'si', 'sí', 'confirmar', 'registrar'], true) => $this->confirm($conversation),
             in_array($normalized, ['2', 'editar'], true) => [
                 'state' => 'SUPPORT_EDIT_MENU',
-                'message' => "¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Descripción\n4. Prioridad\n5. Comentarios\n6. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Descripción\n4. Prioridad\n5. Comentarios\n6. Volver",
             ],
             in_array($normalized, ['3', 'cancelar'], true) => $this->cancel($conversation),
             default => ['state' => 'SUPPORT_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
@@ -195,14 +195,14 @@ class SupportFlowHandler
     {
         return match ($normalized) {
             '1' => ['state' => 'SUPPORT_EDIT_REASON', 'message' => $this->reasonPrompt()],
-            '2' => ['state' => 'SUPPORT_EDIT_REFERENCE', 'message' => "¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\"."],
-            '3' => ['state' => 'SUPPORT_EDIT_DESCRIPTION', 'message' => 'Describe brevemente cómo podemos ayudarte.'],
+            '2' => ['state' => 'SUPPORT_EDIT_REFERENCE', 'message' => "📄 ¿Tienes algún número de cotización, reserva, solicitud o referencia relacionada?\n\nSi no tienes, escribe \"no\"."],
+            '3' => ['state' => 'SUPPORT_EDIT_DESCRIPTION', 'message' => '🎧 Describe brevemente cómo podemos ayudarte.'],
             '4' => ['state' => 'SUPPORT_EDIT_PRIORITY', 'message' => $this->priorityPrompt()],
-            '5' => ['state' => 'SUPPORT_EDIT_COMMENTS', 'message' => "¿Deseas agregar algún comentario adicional?\n\nSi no, escribe \"no\"."],
+            '5' => ['state' => 'SUPPORT_EDIT_COMMENTS', 'message' => "📄 ¿Deseas agregar algún comentario adicional?\n\nSi no, escribe \"no\"."],
             '6' => ['state' => 'SUPPORT_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
             default => [
                 'state' => 'SUPPORT_EDIT_MENU',
-                'message' => "¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Descripción\n4. Prioridad\n5. Comentarios\n6. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Motivo\n2. Referencia\n3. Descripción\n4. Prioridad\n5. Comentarios\n6. Volver",
             ],
         };
     }
@@ -230,7 +230,7 @@ class SupportFlowHandler
 
         return [
             'state' => 'SUPPORT_COMPLETED',
-            'message' => "Listo. Registramos tu solicitud de soporte con ID {$supportRequestId}.\n\nNuestro equipo podrá darle seguimiento.\n\nEscribe \"menu\" para volver al menú principal.",
+            'message' => "✅ Listo. Registramos tu solicitud de soporte con ID {$supportRequestId}.\n\n🎧 Nuestro equipo podrá darle seguimiento.\n\nEscribe \"menu\" para volver al menú principal.",
         ];
     }
 
@@ -241,19 +241,19 @@ class SupportFlowHandler
 
     private function reasonPrompt(): string
     {
-        return "Atención / soporte\n\n¿Con qué necesitas ayuda?\n\n1. Cotización de vuelo\n2. Reserva\n3. Pago\n4. Contrato / documento\n5. Problema técnico\n6. Partes o motores\n7. Otro";
+        return "🎧 Atención / soporte\n\n¿Con qué necesitas ayuda?\n\n1. Cotización de vuelo\n2. Reserva\n3. Pago\n4. Contrato / documento\n5. Problema técnico\n6. Partes o motores\n7. Otro";
     }
 
     private function priorityPrompt(): string
     {
-        return "¿Qué tan urgente es tu solicitud?\n\n1. Normal\n2. Alta\n3. Urgente";
+        return "⚠️ ¿Qué tan urgente es tu solicitud?\n\n1. Normal\n2. Alta\n3. Urgente";
     }
 
     private function summaryMessage(WhatsAppConversation $conversation): string
     {
         $context = $this->context($conversation);
 
-        return "Resumen de solicitud de soporte\n\n"
+        return "📋 Resumen de solicitud de soporte\n\n"
             .'Motivo: '.$this->reasonLabel($context['reason'])."\n"
             .'Referencia: '.($context['reference'] ?: '—')."\n"
             .'Descripción: '.$context['description']."\n"

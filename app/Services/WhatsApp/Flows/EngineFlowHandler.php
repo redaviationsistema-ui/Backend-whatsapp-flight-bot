@@ -16,7 +16,7 @@ class EngineFlowHandler
 
         return [
             'state' => 'ENGINE_ASK_MODEL',
-            'message' => "Motores\n\nIndícame el modelo de motor que necesitas o deseas registrar.",
+            'message' => "⚙️ Motores\n\n🛩️ Indícame el modelo de motor que necesitas o deseas registrar.",
         ];
     }
 
@@ -26,7 +26,7 @@ class EngineFlowHandler
         $normalized = $this->normalize($message);
 
         if ($this->wantsHuman($normalized)) {
-            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => 'Te conectaremos con un asesor para continuar con tu solicitud.'];
+            return ['state' => 'TRANSFER_TO_HUMAN', 'message' => '👨‍💼 Te conectaremos con un asesor para continuar con tu solicitud.'];
         }
 
         return match ($conversation->state) {
@@ -45,7 +45,7 @@ class EngineFlowHandler
             'ENGINE_EDIT_CONDITION' => $this->captureCondition($conversation, $normalized),
             'ENGINE_EDIT_SERVICE_TYPE' => $this->captureServiceType($conversation, $normalized),
             'ENGINE_EDIT_COMMENTS' => $this->captureComments($conversation, $message),
-            'ENGINE_COMPLETED' => ['state' => 'ENGINE_COMPLETED', 'message' => 'Tu solicitud de motor ya fue registrada. Escribe "menu" para volver al menú principal.'],
+            'ENGINE_COMPLETED' => ['state' => 'ENGINE_COMPLETED', 'message' => '✅ Tu solicitud de motor ya fue registrada. Escribe "menu" para volver al menú principal.'],
             default => $this->start($conversation),
         };
     }
@@ -70,7 +70,7 @@ class EngineFlowHandler
 
         return [
             'state' => 'MAIN_MENU',
-            'message' => "Solicitud de motor cancelada.\n\nVolvimos al menú principal.",
+            'message' => "✅ Solicitud de motor cancelada.\n\nVolvimos al menú principal.",
         ];
     }
 
@@ -82,13 +82,13 @@ class EngineFlowHandler
         if ($engineModel === '') {
             return [
                 'state' => $conversation->state,
-                'message' => 'Indícame el modelo de motor que necesitas o deseas registrar.',
+                'message' => '🛩️ Indícame el modelo de motor que necesitas o deseas registrar.',
             ];
         }
         if (strlen($engineModel) > 120) {
             return [
                 'state' => $conversation->state,
-                'message' => 'El modelo es demasiado largo. Envíalo en máximo 120 caracteres.',
+                'message' => '⚠️ El modelo es demasiado largo. Envíalo en máximo 120 caracteres.',
             ];
         }
 
@@ -96,7 +96,7 @@ class EngineFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'ENGINE_ASK_PART_NUMBER'),
-            'message' => "¿Tienes el número de parte (P/N)?\n\nSi no lo tienes, escribe \"no\".",
+            'message' => "🔧 ¿Tienes el número de parte (P/N)?\n\nSi no lo tienes, escribe \"no\".",
         ];
     }
 
@@ -107,7 +107,7 @@ class EngineFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'ENGINE_ASK_SERIAL_NUMBER'),
-            'message' => "¿Tienes el número de serie (S/N)?\n\nSi no lo tienes, escribe \"no\".",
+            'message' => "📄 ¿Tienes el número de serie (S/N)?\n\nSi no lo tienes, escribe \"no\".",
         ];
     }
 
@@ -130,7 +130,7 @@ class EngineFlowHandler
         if ($condition === null) {
             return [
                 'state' => $conversation->state,
-                'message' => "Selecciona una condición válida.\n\n".$this->conditionPrompt(),
+                'message' => "⚠️ Selecciona una condición válida.\n\n".$this->conditionPrompt(),
             ];
         }
 
@@ -150,7 +150,7 @@ class EngineFlowHandler
         if ($serviceType === null) {
             return [
                 'state' => $conversation->state,
-                'message' => "Selecciona un tipo de solicitud válido.\n\n".$this->serviceTypePrompt(),
+                'message' => "⚠️ Selecciona un tipo de solicitud válido.\n\n".$this->serviceTypePrompt(),
             ];
         }
 
@@ -158,7 +158,7 @@ class EngineFlowHandler
 
         return [
             'state' => $this->nextStateAfterCapture($conversation, 'ENGINE_ASK_COMMENTS'),
-            'message' => "¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\".",
+            'message' => "📄 ¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\".",
         ];
     }
 
@@ -169,7 +169,7 @@ class EngineFlowHandler
         if ($comments !== null && strlen($comments) > 1000) {
             return [
                 'state' => $conversation->state,
-                'message' => 'Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
+                'message' => '⚠️ Los comentarios son demasiado largos. Envíalos en máximo 1000 caracteres.',
             ];
         }
 
@@ -188,7 +188,7 @@ class EngineFlowHandler
             in_array($normalized, ['1', 'si', 'sí', 'confirmar', 'registrar'], true) => $this->confirm($conversation),
             in_array($normalized, ['2', 'editar'], true) => [
                 'state' => 'ENGINE_EDIT_FIELD',
-                'message' => "¿Qué deseas modificar?\n\n1. Modelo\n2. Número de parte\n3. Número de serie\n4. Condición\n5. Tipo de solicitud\n6. Comentarios\n7. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Modelo\n2. Número de parte\n3. Número de serie\n4. Condición\n5. Tipo de solicitud\n6. Comentarios\n7. Volver",
             ],
             in_array($normalized, ['3', 'cancelar'], true) => $this->cancel($conversation),
             default => ['state' => 'ENGINE_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
@@ -199,16 +199,16 @@ class EngineFlowHandler
     private function handleEditChoice(WhatsAppConversation $conversation, string $normalized): array
     {
         return match ($normalized) {
-            '1' => ['state' => 'ENGINE_EDIT_MODEL', 'message' => 'Indícame el modelo de motor.'],
-            '2' => ['state' => 'ENGINE_EDIT_PART_NUMBER', 'message' => "¿Tienes el número de parte (P/N)?\n\nSi no lo tienes, escribe \"no\"."],
-            '3' => ['state' => 'ENGINE_EDIT_SERIAL_NUMBER', 'message' => "¿Tienes el número de serie (S/N)?\n\nSi no lo tienes, escribe \"no\"."],
+            '1' => ['state' => 'ENGINE_EDIT_MODEL', 'message' => '🛩️ Indícame el modelo de motor.'],
+            '2' => ['state' => 'ENGINE_EDIT_PART_NUMBER', 'message' => "🔧 ¿Tienes el número de parte (P/N)?\n\nSi no lo tienes, escribe \"no\"."],
+            '3' => ['state' => 'ENGINE_EDIT_SERIAL_NUMBER', 'message' => "📄 ¿Tienes el número de serie (S/N)?\n\nSi no lo tienes, escribe \"no\"."],
             '4' => ['state' => 'ENGINE_EDIT_CONDITION', 'message' => $this->conditionPrompt()],
             '5' => ['state' => 'ENGINE_EDIT_SERVICE_TYPE', 'message' => $this->serviceTypePrompt()],
-            '6' => ['state' => 'ENGINE_EDIT_COMMENTS', 'message' => "¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\"."],
+            '6' => ['state' => 'ENGINE_EDIT_COMMENTS', 'message' => "📄 ¿Deseas agregar algún comentario?\n\nSi no, escribe \"no\"."],
             '7' => ['state' => 'ENGINE_SHOW_SUMMARY', 'message' => $this->summaryMessage($conversation)],
             default => [
                 'state' => 'ENGINE_EDIT_FIELD',
-                'message' => "¿Qué deseas modificar?\n\n1. Modelo\n2. Número de parte\n3. Número de serie\n4. Condición\n5. Tipo de solicitud\n6. Comentarios\n7. Volver",
+                'message' => "📋 ¿Qué deseas modificar?\n\n1. Modelo\n2. Número de parte\n3. Número de serie\n4. Condición\n5. Tipo de solicitud\n6. Comentarios\n7. Volver",
             ],
         };
     }
@@ -237,7 +237,7 @@ class EngineFlowHandler
 
         return [
             'state' => 'ENGINE_COMPLETED',
-            'message' => "Listo. Registramos tu solicitud de motor con ID {$engineRequestId}.\n\nUn asesor podrá darle seguimiento.\n\nEscribe \"menu\" para volver al menú principal.",
+            'message' => "✅ Listo. Registramos tu solicitud de motor con ID {$engineRequestId}.\n\n👨‍💼 Un asesor podrá darle seguimiento.\n\nEscribe \"menu\" para volver al menú principal.",
         ];
     }
 
@@ -248,19 +248,19 @@ class EngineFlowHandler
 
     private function conditionPrompt(): string
     {
-        return "¿Cuál es la condición del motor?\n\n1. New\n2. Overhauled\n3. Serviceable\n4. As Removed\n5. Core\n6. Unknown";
+        return "⚙️ ¿Cuál es la condición del motor?\n\n1. New\n2. Overhauled\n3. Serviceable\n4. As Removed\n5. Core\n6. Unknown";
     }
 
     private function serviceTypePrompt(): string
     {
-        return "¿Qué tipo de solicitud deseas registrar?\n\n1. Compra\n2. Venta\n3. Reparación\n4. Overhaul\n5. Exchange\n6. Inspección\n7. Otro";
+        return "🔧 ¿Qué tipo de solicitud deseas registrar?\n\n1. Compra\n2. Venta\n3. Reparación\n4. Overhaul\n5. Exchange\n6. Inspección\n7. Otro";
     }
 
     private function summaryMessage(WhatsAppConversation $conversation): string
     {
         $context = $this->context($conversation);
 
-        return "Resumen de solicitud de motor\n\n"
+        return "📋 Resumen de solicitud de motor\n\n"
             .'Modelo: '.$context['engine_model']."\n"
             .'P/N: '.($context['part_number'] ?: '—')."\n"
             .'S/N: '.($context['serial_number'] ?: '—')."\n"

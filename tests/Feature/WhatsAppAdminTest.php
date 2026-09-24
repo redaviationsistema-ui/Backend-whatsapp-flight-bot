@@ -27,7 +27,7 @@ class WhatsAppAdminTest extends TestCase
     #[TestWith(['POST', '/{id}/takeover'])]
     #[TestWith(['POST', '/{id}/transfer-to-human'])]
     #[TestWith(['POST', '/{id}/return-to-bot'])]
-    public function test_conversation_routes_are_accessible_without_authentication(string $method, string $path): void
+    public function test_conversation_routes_return_json_unauthenticated_for_guests(string $method, string $path): void
     {
         config(['services.whatsapp.phone_number_id' => '123', 'services.whatsapp.access_token' => 'test-token']);
         Http::preventStrayRequests();
@@ -36,19 +36,36 @@ class WhatsAppAdminTest extends TestCase
         $path = str_replace('{id}', (string) $conversation->id, $path);
 
         $this->json($method, '/api/admin/whatsapp/conversations'.$path, ['body' => 'Hola'])
-            ->assertSuccessful()->assertJsonPath('success', true);
+            ->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'No autenticado.');
         $this->assertGuest();
-        if ($method === 'POST' && str_ends_with($path, '/messages')) {
-            $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'out.public', 'body' => 'Hola']);
-            Http::assertSentCount(1);
-        } else {
-            Http::assertNothingSent();
-        }
+        Http::assertNothingSent();
     }
 
-    public function test_regular_user_can_access_conversations(): void
+    public function test_regular_user_is_forbidden_from_admin_whatsapp_routes(): void
     {
-        $this->actingAs(User::factory()->create())->getJson('/api/admin/whatsapp/conversations')->assertOk()->assertJsonPath('success', true);
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/admin/whatsapp/conversations')
+            ->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Acceso restringido a administradores.');
+    }
+
+    public function test_admin_user_can_access_conversations(): void
+    {
+        $this->actingAs(User::factory()->create(['is_admin' => true]))
+            ->getJson('/api/admin/whatsapp/conversations')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
+    public function test_browser_request_to_admin_api_returns_json_unauthenticated_without_login_redirect(): void
+    {
+        $this->get('/api/admin/whatsapp/engines?page=1&per_page=25')
+            ->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'No autenticado.');
     }
 
     public function test_admin_login_rotates_session_and_logout_invalidates_it(): void
@@ -84,16 +101,16 @@ class WhatsAppAdminTest extends TestCase
             ->assertTooManyRequests()->assertJsonPath('success', false);
     }
 
-    public function test_public_takeover_requires_neither_session_nor_csrf_token(): void
+    public function test_takeover_requires_authentication(): void
     {
         $conversation = WhatsAppConversation::factory()->create();
         $this->app->instance('env', 'local');
 
         $this->postJson('/api/admin/whatsapp/conversations/'.$conversation->id.'/takeover')
-            ->assertOk()->assertJsonPath('success', true);
-        $this->assertNotNull($conversation->refresh()->transferred_to_human_at);
-        $this->assertSame('TRANSFER_TO_HUMAN', $conversation->state);
-        $this->assertTrue($conversation->is_active);
+            ->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'No autenticado.');
+        $this->assertNull($conversation->refresh()->transferred_to_human_at);
     }
 
     public function test_conversations_are_paginated_by_recency_with_contact_and_latest_message(): void
@@ -239,7 +256,8 @@ class WhatsAppAdminTest extends TestCase
             'status' => 'NUEVA',
         ]);
 
-        $this->getJson('/api/admin/whatsapp/dashboard')
+        $this->actingAs(User::factory()->create(['is_admin' => true]))
+            ->getJson('/api/admin/whatsapp/dashboard')
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.conversations.total', 1)
@@ -272,24 +290,30 @@ class WhatsAppAdminTest extends TestCase
             'status' => 'CERRADA',
         ]);
 
-        $this->getJson('/api/admin/whatsapp/parts?search=ABC&status=NUEVA')
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/parts?search=ABC&status=NUEVA')
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $part->id)
             ->assertJsonPath('data.0.contact.phone_number', $conversation->contact->phone_number);
 
-        $this->getJson('/api/admin/whatsapp/parts/'.$part->id)
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/parts/'.$part->id)
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.part_number', 'ABC-123');
 
-        $this->patchJson('/api/admin/whatsapp/parts/'.$part->id.'/status', ['status' => 'EN_ATENCION'])
+        $this->actingAs($admin)
+            ->patchJson('/api/admin/whatsapp/parts/'.$part->id.'/status', ['status' => 'EN_ATENCION'])
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.status', 'EN_ATENCION');
         $this->assertDatabaseHas('parts_requests', ['id' => $part->id, 'status' => 'EN_ATENCION']);
 
-        $this->patchJson('/api/admin/whatsapp/parts/'.$part->id.'/status', ['status' => 'INVALIDA'])
+        $this->actingAs($admin)
+            ->patchJson('/api/admin/whatsapp/parts/'.$part->id.'/status', ['status' => 'INVALIDA'])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('status');
     }
@@ -325,15 +349,20 @@ class WhatsAppAdminTest extends TestCase
             'transferred_at' => now(),
         ]);
 
-        $this->getJson('/api/admin/whatsapp/engines?service_type=Mantenimiento')
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/engines?service_type=Mantenimiento')
             ->assertOk()
             ->assertJsonPath('data.0.id', $engine->id)
             ->assertJsonPath('data.0.engine_model', 'PT6A');
-        $this->getJson('/api/admin/whatsapp/support?priority=alta')
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/support?priority=alta')
             ->assertOk()
             ->assertJsonPath('data.0.id', $support->id)
             ->assertJsonPath('data.0.reference', 'FAC-1');
-        $this->getJson('/api/admin/whatsapp/advisor-requests?transferred=1')
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/advisor-requests?transferred=1')
             ->assertOk()
             ->assertJsonPath('data.0.id', $advisor->id)
             ->assertJsonPath('data.0.transferred_at', $advisor->transferred_at->toJSON());
@@ -344,7 +373,8 @@ class WhatsAppAdminTest extends TestCase
         $conversation = WhatsAppConversation::factory()->create();
         $message = WhatsAppMessage::factory()->for($conversation, 'conversation')->create(['body' => 'Historial', 'processing_context' => ['private' => true]]);
 
-        $this->getJson('/api/admin/whatsapp/history?per_page=1')
+        $this->actingAs(User::factory()->create(['is_admin' => true]))
+            ->getJson('/api/admin/whatsapp/history?per_page=1')
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.0.id', 'message-'.$message->id)
