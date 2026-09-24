@@ -13,17 +13,16 @@ return new class extends Migration
     public function up(): void
     {
         if (DB::getDriverName() === 'pgsql') {
-            DB::statement(<<<'SQL'
+            DB::statement('
                 ALTER TABLE whats_app_flight_requests
-                ALTER COLUMN selected_aircraft_id DROP DEFAULT,
-                ALTER COLUMN selected_aircraft_id TYPE uuid
-                USING CASE
-                    WHEN selected_aircraft_id IS NULL THEN NULL
-                    WHEN selected_aircraft_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-                        THEN selected_aircraft_id::text::uuid
-                    ELSE NULL
-                END
-            SQL);
+                ALTER COLUMN selected_aircraft_id DROP DEFAULT
+            ');
+
+            DB::statement('
+                ALTER TABLE whats_app_flight_requests
+                ALTER COLUMN selected_aircraft_id TYPE varchar(36)
+                USING selected_aircraft_id::text
+            ');
 
             return;
         }

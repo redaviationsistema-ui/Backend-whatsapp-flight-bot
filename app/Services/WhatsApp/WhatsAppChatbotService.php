@@ -2784,7 +2784,7 @@ class WhatsAppChatbotService
                 (string) ($result['aircraft_name'] ?? 'Aeronave disponible'),
                 isset($result['capacity']) ? $result['capacity'].' pasajeros' : null,
                 isset($result['display_time']) ? 'Tiempo: '.$result['display_time'] : null,
-                isset($result['total']) ? 'Precio: '.$this->money($result['total'], (string) ($result['currency'] ?? 'Moneda no especificada')) : null,
+                isset($result['total']) ? 'Precio Aproximado: '.$this->money($result['total'], (string) ($result['currency'] ?? 'Moneda no especificada')) : null,
             ])))
             ->implode("\n\n");
 
