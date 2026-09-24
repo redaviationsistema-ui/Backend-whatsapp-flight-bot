@@ -198,6 +198,7 @@ class WhatsAppDeliveryTest extends TestCase
     {
         config([
             'services.whatsapp.phone_number_id' => '123', 'services.whatsapp.access_token' => 'test-token',
+            'flight_api.mode' => 'remote',
             'flight_api.base_url' => 'https://backend.test', 'flight_api.retry_times' => 0,
         ]);
         Http::preventStrayRequests();

@@ -48,6 +48,7 @@ class WhatsAppWebhookTest extends TestCase
     public function test_it_processes_conversation_flow_and_ignores_duplicate_message_ids(): void
     {
         config([
+            'flight_api.mode' => 'remote',
             'flight_api.base_url' => 'https://backend.test',
             'flight_api.token' => 'plain-api-token',
             'flight_api.retry_times' => 0,

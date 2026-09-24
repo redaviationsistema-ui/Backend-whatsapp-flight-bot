@@ -3,6 +3,7 @@
 namespace App\Services\Flights;
 
 use App\Models\WhatsAppFlightRequest;
+use App\Services\Quotes\QuoteEngine;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\RequestException;
@@ -13,6 +14,8 @@ use RuntimeException;
 
 class FlightApiService
 {
+    public function __construct(private readonly QuoteEngine $quoteEngine) {}
+
     /**
      * @return array<int, array<string, mixed>>
      */
@@ -22,6 +25,7 @@ class FlightApiService
         $payload = $this->previewPayload($flightRequest);
 
         Log::info('Flight API quote preview request.', [
+            'mode' => $this->mode(),
             'path' => $path,
             'flight_request_id' => $flightRequest->id,
             'has_aircraft_preference' => filled($flightRequest->aircraft_preference),
@@ -32,7 +36,7 @@ class FlightApiService
             'legs_count' => count($payload['legs'] ?? []),
         ]);
 
-        $response = $this->post($path, $payload);
+        $response = $this->preview($path, $payload);
         $options = $response['options'] ?? $response['matches'] ?? [];
 
         if (! is_array($options)) {
@@ -240,6 +244,24 @@ class FlightApiService
         }
 
         return $json;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function preview(string $path, array $payload): array
+    {
+        if ($this->mode() === 'local') {
+            return $this->quoteEngine->preview($payload);
+        }
+
+        return $this->post($path, $payload);
+    }
+
+    private function mode(): string
+    {
+        return (string) config('flight_api.mode', 'local');
     }
 
     private function sanitizeTechnicalMessage(string $message): string

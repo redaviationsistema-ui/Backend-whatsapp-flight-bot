@@ -216,7 +216,7 @@ class WhatsAppIdempotencyTest extends TestCase
 
     public function test_each_automated_stage_requires_a_new_message_and_retries_do_not_repeat_it(): void
     {
-        config(['flight_api.base_url' => 'https://backend.test', 'flight_api.retry_times' => 0]);
+        config(['flight_api.mode' => 'remote', 'flight_api.base_url' => 'https://backend.test', 'flight_api.retry_times' => 0]);
         Http::preventStrayRequests();
         Http::fake([
             'https://graph.facebook.com/*/123/messages' => Http::sequence()

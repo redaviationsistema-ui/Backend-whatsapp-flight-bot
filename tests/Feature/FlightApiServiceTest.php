@@ -6,6 +6,7 @@ use App\Models\WhatsAppContact;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppFlightRequest;
 use App\Services\Flights\FlightApiService;
+use App\Services\Quotes\QuoteEngine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
@@ -23,10 +24,37 @@ class FlightApiServiceTest extends TestCase
         parent::setUp();
 
         config([
+            'flight_api.mode' => 'remote',
             'flight_api.base_url' => 'https://backend.test',
             'flight_api.token' => 'plain-api-token',
             'flight_api.retry_times' => 0,
         ]);
+    }
+
+    public function test_local_mode_uses_quote_engine_without_self_http_preview_request(): void
+    {
+        config(['flight_api.mode' => 'local']);
+        Http::preventStrayRequests();
+        $this->mock(QuoteEngine::class, function ($mock): void {
+            $mock->shouldReceive('preview')
+                ->once()
+                ->with(Mockery::on(fn (array $payload): bool => ($payload['origin'] ?? null) === 'Toluca'
+                    && ($payload['destination'] ?? null) === 'Cancun'
+                    && ($payload['passengers'] ?? null) === 5))
+                ->andReturn([
+                    'status' => 'ok',
+                    'options' => [[
+                        'aircraft_id' => 101,
+                        'aircraft_name' => 'Citation CJ3',
+                        'total' => 55000,
+                    ]],
+                ]);
+        });
+
+        $options = app(FlightApiService::class)->searchFlights($this->flightRequest());
+
+        $this->assertSame(101, $options[0]['aircraft_id']);
+        Http::assertNothingSent();
     }
 
     public function test_it_normalizes_preview_options_from_official_backend(): void

@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'mode' => env('FLIGHT_API_MODE', 'local'),
     'base_url' => env('FLIGHT_API_BASE_URL'),
     'token' => env('FLIGHT_API_TOKEN'),
     'timeout' => (int) env('FLIGHT_API_TIMEOUT', 20),
