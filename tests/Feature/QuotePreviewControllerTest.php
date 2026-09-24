@@ -142,6 +142,181 @@ class QuotePreviewControllerTest extends TestCase
             ->assertJsonCount(0, 'options');
     }
 
+    public function test_preview_resolves_mexico_airports_by_uppercase_iata_and_icao_columns(): void
+    {
+        $this->seedAirports();
+        $this->seedAircraft();
+        $this->seedEligibility();
+        $this->quoteDb()->flushQueryLog();
+        $this->quoteDb()->enableQueryLog();
+
+        $response = $this->postJson('/api/v1/client/quotes/preview', [
+            'passengers' => 4,
+            'legs' => [[
+                'origin' => ['iata' => 'MMTO'],
+                'destination' => ['icao' => 'MMMY'],
+                'departure_datetime' => '2026-10-15T14:30:00',
+            ]],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('options.0.customer_routes.0.origin.iata', 'TLC')
+            ->assertJsonPath('options.0.customer_routes.0.origin.icao', 'MMTO')
+            ->assertJsonPath('options.0.customer_routes.0.origin.lat', 19.3371)
+            ->assertJsonPath('options.0.customer_routes.0.origin.lng', -99.566)
+            ->assertJsonPath('options.0.customer_routes.0.origin.elevation_ft', 8466)
+            ->assertJsonPath('options.0.customer_routes.0.destination.iata', 'MTY')
+            ->assertJsonPath('options.0.customer_routes.0.destination.icao', 'MMMY');
+
+        $queries = collect($this->quoteDb()->getQueryLog())
+            ->pluck('query')
+            ->filter(fn (string $query): bool => str_contains($query, 'aeropuertos_mexico'))
+            ->implode("\n");
+
+        $this->assertStringContainsString('"IATA"', $queries);
+        $this->assertStringContainsString('"ICAO"', $queries);
+        $this->assertStringNotContainsString('"iata"', $queries);
+        $this->quoteDb()->disableQueryLog();
+    }
+
+    public function test_preview_resolves_mty_by_uppercase_iata_column(): void
+    {
+        $this->seedAirports();
+        $this->seedAircraft();
+        $this->seedEligibility();
+
+        $response = $this->postJson('/api/v1/client/quotes/preview', [
+            'passengers' => 4,
+            'legs' => [[
+                'origin' => ['iata' => 'MTY'],
+                'destination' => ['iata' => 'CUN'],
+                'departure_datetime' => '2026-10-15T14:30:00',
+            ]],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('options.0.customer_routes.0.origin.iata', 'MTY');
+    }
+
+    public function test_preview_keeps_aircraft_fleet_iata_lowercase_for_base_airport_lookup(): void
+    {
+        $this->seedAirports();
+        $this->seedEligibility();
+        $this->quoteDb()->table('aircraft_fleet')->insert([
+            'id' => 404,
+            'name' => 'Base IATA Jet',
+            'aircraft_type' => 'JET LIGERO (LIGHT JET)',
+            'capacity_passengers' => 7,
+            'range_nm' => 1800,
+            'cruise_speed_knots' => 410,
+            'rental_price_usd' => 3800,
+            'iata' => 'MTY',
+            'is_active' => true,
+        ]);
+
+        $response = $this->postJson('/api/v1/client/quotes/preview', [
+            'passengers' => 4,
+            'legs' => [[
+                'origin' => ['iata' => 'TLC'],
+                'destination' => ['iata' => 'CUN'],
+                'departure_datetime' => '2026-10-15T14:30:00',
+            ]],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('options.0.aircraft_id', 404)
+            ->assertJsonPath('options.0.ferry_routes.0.origin.iata', 'MTY');
+    }
+
+    public function test_preview_filters_aircraft_by_capacity_range_runway_and_elevation(): void
+    {
+        $this->seedAirports();
+        $this->quoteDb()->table('aircraft_fleet')->insert([
+            [
+                'id' => 501,
+                'name' => 'Operational Match',
+                'aircraft_type' => 'JET LIGERO (LIGHT JET)',
+                'capacity_passengers' => 6,
+                'range_nm' => 1800,
+                'cruise_speed_knots' => 410,
+                'rental_price_usd' => 3800,
+                'base_airport_id' => 3,
+                'minimum_runway_m' => 2500,
+                'max_airport_elevation_ft' => 9000,
+                'is_active' => true,
+            ],
+            [
+                'id' => 502,
+                'name' => 'Too Small',
+                'aircraft_type' => 'JET LIGERO (LIGHT JET)',
+                'capacity_passengers' => 3,
+                'range_nm' => 1800,
+                'cruise_speed_knots' => 410,
+                'rental_price_usd' => 3800,
+                'base_airport_id' => 3,
+                'minimum_runway_m' => 2500,
+                'max_airport_elevation_ft' => 9000,
+                'is_active' => true,
+            ],
+            [
+                'id' => 503,
+                'name' => 'Too Short Range',
+                'aircraft_type' => 'JET LIGERO (LIGHT JET)',
+                'capacity_passengers' => 6,
+                'range_nm' => 100,
+                'cruise_speed_knots' => 410,
+                'rental_price_usd' => 3800,
+                'base_airport_id' => 3,
+                'minimum_runway_m' => 2500,
+                'max_airport_elevation_ft' => 9000,
+                'is_active' => true,
+            ],
+            [
+                'id' => 504,
+                'name' => 'Needs Longer Runway',
+                'aircraft_type' => 'JET LIGERO (LIGHT JET)',
+                'capacity_passengers' => 6,
+                'range_nm' => 1800,
+                'cruise_speed_knots' => 410,
+                'rental_price_usd' => 3800,
+                'base_airport_id' => 3,
+                'minimum_runway_m' => 4000,
+                'max_airport_elevation_ft' => 9000,
+                'is_active' => true,
+            ],
+            [
+                'id' => 505,
+                'name' => 'Too Low Elevation Limit',
+                'aircraft_type' => 'JET LIGERO (LIGHT JET)',
+                'capacity_passengers' => 6,
+                'range_nm' => 1800,
+                'cruise_speed_knots' => 410,
+                'rental_price_usd' => 3800,
+                'base_airport_id' => 3,
+                'minimum_runway_m' => 2500,
+                'max_airport_elevation_ft' => 8000,
+                'is_active' => true,
+            ],
+        ]);
+
+        $response = $this->postJson('/api/v1/client/quotes/preview', [
+            'passengers' => 5,
+            'legs' => [[
+                'origin' => ['iata' => 'TLC'],
+                'destination' => ['iata' => 'CUN'],
+                'departure_datetime' => '2026-10-15T14:30:00',
+            ]],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonCount(1, 'options')
+            ->assertJsonPath('options.0.aircraft_id', 501);
+    }
+
     public function test_quote_engine_uses_quote_db_without_touching_default_aircraft_table(): void
     {
         $this->seedAirports();
@@ -208,15 +383,17 @@ class QuotePreviewControllerTest extends TestCase
         $schema = $this->quoteDb()->getSchemaBuilder();
 
         $schema->create('aeropuertos_mexico', function (Blueprint $table): void {
-            $table->id();
-            $table->string('iata')->nullable();
-            $table->string('icao')->nullable();
-            $table->string('nombre')->nullable();
-            $table->string('ciudad')->nullable();
-            $table->string('estado')->nullable();
-            $table->string('country')->nullable();
-            $table->decimal('lat', 10, 6);
-            $table->decimal('lng', 10, 6);
+            $table->unsignedInteger('ID')->primary();
+            $table->string('AEROPUERTO')->nullable();
+            $table->string('CIUDAD')->nullable();
+            $table->string('ESTADO')->nullable();
+            $table->string('COUNTRY')->nullable();
+            $table->string('IATA')->nullable();
+            $table->string('ICAO')->nullable();
+            $table->decimal('LATITUDE', 10, 6);
+            $table->decimal('LONGITUDE', 10, 6);
+            $table->unsignedInteger('ELEVATION_FT')->nullable();
+            $table->unsignedInteger('runway_length_m')->nullable();
         });
 
         $schema->create('airports_geo', function (Blueprint $table): void {
@@ -239,10 +416,16 @@ class QuotePreviewControllerTest extends TestCase
             $table->unsignedInteger('range_nm');
             $table->unsignedInteger('cruise_speed_knots');
             $table->unsignedInteger('rental_price_usd');
-            $table->foreignId('base_airport_id');
+            $table->foreignId('base_airport_id')->nullable();
+            $table->string('iata')->nullable();
+            $table->string('base_city')->nullable();
+            $table->unsignedInteger('minimum_runway_m')->nullable();
+            $table->unsignedInteger('max_airport_elevation_ft')->nullable();
+            $table->boolean('performance_validation_required')->default(false);
             $table->unsignedInteger('airport_fees_usd')->default(0);
             $table->unsignedInteger('overnight_fee_usd')->default(0);
             $table->boolean('is_active')->default(true);
+            $table->string('estado')->nullable();
         });
 
         $schema->create('reservations', function (Blueprint $table): void {
@@ -269,9 +452,9 @@ class QuotePreviewControllerTest extends TestCase
     private function seedAirports(): void
     {
         $airports = [
-            ['id' => 1, 'iata' => 'TLC', 'icao' => 'MMTO', 'nombre' => 'Toluca', 'ciudad' => 'Toluca', 'estado' => 'Estado de México', 'country' => 'MX', 'lat' => 19.337100, 'lng' => -99.566000],
-            ['id' => 2, 'iata' => 'CUN', 'icao' => 'MMUN', 'nombre' => 'Cancun', 'ciudad' => 'Cancun', 'estado' => 'Quintana Roo', 'country' => 'MX', 'lat' => 21.036500, 'lng' => -86.877100],
-            ['id' => 3, 'iata' => 'MTY', 'icao' => 'MMMY', 'nombre' => 'Monterrey', 'ciudad' => 'Monterrey', 'estado' => 'Nuevo León', 'country' => 'MX', 'lat' => 25.778500, 'lng' => -100.107000],
+            ['ID' => 1, 'IATA' => 'TLC', 'ICAO' => 'MMTO', 'AEROPUERTO' => 'Toluca', 'CIUDAD' => 'Toluca', 'ESTADO' => 'Estado de México', 'COUNTRY' => 'MX', 'LATITUDE' => 19.337100, 'LONGITUDE' => -99.566000, 'ELEVATION_FT' => 8466, 'runway_length_m' => 4200],
+            ['ID' => 2, 'IATA' => 'CUN', 'ICAO' => 'MMUN', 'AEROPUERTO' => 'Cancun', 'CIUDAD' => 'Cancun', 'ESTADO' => 'Quintana Roo', 'COUNTRY' => 'MX', 'LATITUDE' => 21.036500, 'LONGITUDE' => -86.877100, 'ELEVATION_FT' => 22, 'runway_length_m' => 3500],
+            ['ID' => 3, 'IATA' => 'MTY', 'ICAO' => 'MMMY', 'AEROPUERTO' => 'Monterrey', 'CIUDAD' => 'Monterrey', 'ESTADO' => 'Nuevo León', 'COUNTRY' => 'MX', 'LATITUDE' => 25.778500, 'LONGITUDE' => -100.107000, 'ELEVATION_FT' => 1278, 'runway_length_m' => 3000],
         ];
 
         foreach ($airports as $airport) {

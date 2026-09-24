@@ -61,6 +61,10 @@ class QuoteEngine
             return null;
         }
 
+        if (! $this->aircraftAirportPerformanceAllows($aircraft, $legs)) {
+            return null;
+        }
+
         $airportIds = collect($legs)
             ->flatMap(fn (array $leg): array => [$leg['origin']['id'], $leg['destination']['id']])
             ->filter()
@@ -372,6 +376,36 @@ class QuoteEngine
         foreach ($legs as $leg) {
             if ($this->distanceNm($leg['origin'], $leg['destination']) > $range) {
                 return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $legs
+     */
+    private function aircraftAirportPerformanceAllows(array $aircraft, array $legs): bool
+    {
+        $minimumRunwayM = (float) $this->firstFilled($aircraft, ['minimum_runway_m'], 0);
+        $maxAirportElevationFt = (float) $this->firstFilled($aircraft, ['max_airport_elevation_ft'], 0);
+
+        if ($minimumRunwayM <= 0 && $maxAirportElevationFt <= 0) {
+            return true;
+        }
+
+        foreach ($legs as $leg) {
+            foreach ([$leg['origin'], $leg['destination']] as $airport) {
+                $runwayLengthM = (float) $this->firstFilled($airport, ['runway_length_m'], 0);
+                $elevationFt = (float) $this->firstFilled($airport, ['elevation_ft'], 0);
+
+                if ($minimumRunwayM > 0 && $runwayLengthM > 0 && $runwayLengthM < $minimumRunwayM) {
+                    return false;
+                }
+
+                if ($maxAirportElevationFt > 0 && $elevationFt > $maxAirportElevationFt) {
+                    return false;
+                }
             }
         }
 

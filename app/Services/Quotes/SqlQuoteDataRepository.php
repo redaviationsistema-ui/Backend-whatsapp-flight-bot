@@ -3,6 +3,7 @@
 namespace App\Services\Quotes;
 
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Query\Builder;
 
 class SqlQuoteDataRepository
 {
@@ -24,8 +25,8 @@ class SqlQuoteDataRepository
 
             $query = $this->database()->table($table);
 
-            if ($value = $this->firstFilled($airport, ['airport_id', 'id'])) {
-                $match = (clone $query)->where('id', $value)->first();
+            if ($value = $this->firstFilled($airport, ['airport_id', 'id', 'ID'])) {
+                $match = $this->firstMatch($table, $query, ['id', 'ID'], $value, normalizeString: false);
                 if ($match) {
                     return $this->normalizeAirport((array) $match);
                 }
@@ -36,15 +37,16 @@ class SqlQuoteDataRepository
                     continue;
                 }
 
-                foreach ($this->airportColumnsFor($key) as $column) {
-                    if (! $this->hasColumn($table, $column)) {
-                        continue;
-                    }
+                $match = $this->firstMatch(
+                    $table,
+                    $query,
+                    $this->airportColumnsFor($table, $key),
+                    $value,
+                    normalizeString: in_array($key, ['iata', 'icao', 'code'], true)
+                );
 
-                    $match = (clone $query)->where($column, $value)->first();
-                    if ($match) {
-                        return $this->normalizeAirport((array) $match);
-                    }
+                if ($match) {
+                    return $this->normalizeAirport((array) $match);
                 }
             }
         }
@@ -139,8 +141,17 @@ class SqlQuoteDataRepository
     /**
      * @return array<int, string>
      */
-    private function airportColumnsFor(string $key): array
+    private function airportColumnsFor(string $table, string $key): array
     {
+        if ($this->isNationalAirportTable($table)) {
+            return match ($key) {
+                'iata', 'icao', 'code' => ['IATA', 'ICAO'],
+                'name' => ['AEROPUERTO'],
+                'city' => ['CIUDAD'],
+                default => [$key],
+            };
+        }
+
         return match ($key) {
             'iata', 'code' => ['iata', 'IATA', 'code', 'codigo', 'airport_code'],
             'icao' => ['icao', 'ICAO'],
@@ -157,17 +168,50 @@ class SqlQuoteDataRepository
     private function normalizeAirport(array $row): array
     {
         return [
-            'id' => $this->firstFilled($row, ['id', 'airport_id']),
-            'name' => $this->firstFilled($row, ['name', 'nombre', 'airport_name']),
+            'id' => $this->firstFilled($row, ['id', 'ID', 'airport_id']),
+            'name' => $this->firstFilled($row, ['name', 'nombre', 'AEROPUERTO', 'airport_name']),
             'iata' => $this->firstFilled($row, ['iata', 'IATA', 'code', 'codigo', 'airport_code']),
             'icao' => $this->firstFilled($row, ['icao', 'ICAO']),
-            'city' => $this->firstFilled($row, ['city', 'ciudad']),
-            'state' => $this->firstFilled($row, ['state', 'estado']),
-            'country' => $this->firstFilled($row, ['country', 'pais']),
+            'city' => $this->firstFilled($row, ['city', 'ciudad', 'CIUDAD']),
+            'state' => $this->firstFilled($row, ['state', 'estado', 'ESTADO']),
+            'country' => $this->firstFilled($row, ['country', 'COUNTRY', 'pais']),
             'lat' => (float) $this->firstFilled($row, ['lat', 'latitude', 'LATITUDE'], 0),
             'lng' => (float) $this->firstFilled($row, ['lng', 'lon', 'longitude', 'LONGITUDE'], 0),
+            'elevation_ft' => $this->firstFilled($row, ['elevation_ft', 'ELEVATION_FT']),
+            'runway_length_m' => $this->firstFilled($row, ['runway_length_m']),
             'raw' => $row,
         ];
+    }
+
+    /**
+     * @param  array<int, string>  $columns
+     */
+    private function firstMatch(string $table, Builder $query, array $columns, mixed $value, bool $normalizeString = true): ?object
+    {
+        $availableColumns = array_values(array_filter(
+            $columns,
+            fn (string $column): bool => $this->hasColumn($table, $column)
+        ));
+
+        if ($availableColumns === []) {
+            return null;
+        }
+
+        $normalizedValue = is_string($value) && $normalizeString ? mb_strtoupper(trim($value)) : $value;
+
+        return (clone $query)
+            ->where(function ($query) use ($availableColumns, $normalizedValue): void {
+                foreach ($availableColumns as $index => $column) {
+                    $method = $index === 0 ? 'where' : 'orWhere';
+                    $query->{$method}($column, $normalizedValue);
+                }
+            })
+            ->first();
+    }
+
+    private function isNationalAirportTable(string $table): bool
+    {
+        return $table === (string) config('quote_engine.tables.national_airports');
     }
 
     private function hasReservationConflict(int $aircraftId, string $startIso, string $endIso): bool
