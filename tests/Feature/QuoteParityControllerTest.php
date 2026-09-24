@@ -6,6 +6,8 @@ use Tests\TestCase;
 
 class QuoteParityControllerTest extends TestCase
 {
+    private const AIRCRAFT_UUID = '16450000-0000-4000-8000-000000000001';
+
     public function test_parity_check_reports_exact_matches_for_equivalent_results(): void
     {
         $result = $this->quoteResult();
@@ -27,8 +29,8 @@ class QuoteParityControllerTest extends TestCase
             ->assertJsonPath('metrics.mismatches', 0)
             ->assertJsonPath('metrics.backend_errors', 0)
             ->assertJsonPath('metrics.parity_percentage', 100)
-            ->assertJsonPath('matching.legacy_aircraft_ids', [101])
-            ->assertJsonPath('matching.backend_aircraft_ids', [101])
+            ->assertJsonPath('matching.legacy_aircraft_ids', [self::AIRCRAFT_UUID])
+            ->assertJsonPath('matching.backend_aircraft_ids', [self::AIRCRAFT_UUID])
             ->assertJsonCount(0, 'divergences');
     }
 
@@ -74,7 +76,7 @@ class QuoteParityControllerTest extends TestCase
             ->assertJsonPath('metrics.within_tolerance', 1)
             ->assertJsonPath('metrics.mismatches', 4)
             ->assertJsonPath('divergences.0.quote_input_identifier', 'rounding-case')
-            ->assertJsonPath('divergences.0.aircraft_id', 101)
+            ->assertJsonPath('divergences.0.aircraft_id', self::AIRCRAFT_UUID)
             ->assertJsonPath('divergences.0.field', 'pricing_breakdown.customer_flight_cost')
             ->assertJsonPath('divergences.0.legacy_value', 8613.33)
             ->assertJsonPath('divergences.0.backend_value', 8614)
@@ -113,7 +115,7 @@ class QuoteParityControllerTest extends TestCase
     private function quoteResult(array $optionOverrides = []): array
     {
         $option = array_replace_recursive([
-            'aircraft_id' => 101,
+            'aircraft_id' => self::AIRCRAFT_UUID,
             'aircraft_name' => 'Citation CJ3',
             'estimated_total' => 27492.67,
             'total' => 27492.67,

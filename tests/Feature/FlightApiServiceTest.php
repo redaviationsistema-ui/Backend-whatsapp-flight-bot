@@ -19,6 +19,8 @@ class FlightApiServiceTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const AIRCRAFT_UUID = '16450000-0000-4000-8000-000000000001';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -44,7 +46,7 @@ class FlightApiServiceTest extends TestCase
                 ->andReturn([
                     'status' => 'ok',
                     'options' => [[
-                        'aircraft_id' => 101,
+                        'aircraft_id' => self::AIRCRAFT_UUID,
                         'aircraft_name' => 'Citation CJ3',
                         'total' => 55000,
                     ]],
@@ -53,7 +55,7 @@ class FlightApiServiceTest extends TestCase
 
         $options = app(FlightApiService::class)->searchFlights($this->flightRequest());
 
-        $this->assertSame(101, $options[0]['aircraft_id']);
+        $this->assertSame(self::AIRCRAFT_UUID, $options[0]['aircraft_id']);
         Http::assertNothingSent();
     }
 
@@ -63,7 +65,7 @@ class FlightApiServiceTest extends TestCase
             'https://backend.test/api/v1/client/quotes/preview' => Http::response([
                 'success' => true,
                 'options' => [[
-                    'aircraft_id' => 101,
+                    'aircraft_id' => self::AIRCRAFT_UUID,
                     'provider_id' => 201,
                     'match_id' => 'match-101',
                     'aircraft_name' => 'Gulfstream G-IV',
@@ -78,7 +80,7 @@ class FlightApiServiceTest extends TestCase
         $options = app(FlightApiService::class)->searchFlights($this->flightRequest());
 
         $this->assertCount(1, $options);
-        $this->assertSame(101, $options[0]['aircraft_id']);
+        $this->assertSame(self::AIRCRAFT_UUID, $options[0]['aircraft_id']);
         $this->assertSame(201, $options[0]['provider_id']);
         $this->assertSame('match-101', $options[0]['match_id']);
         $this->assertSame('Gulfstream G-IV', $options[0]['aircraft_name']);
@@ -90,7 +92,7 @@ class FlightApiServiceTest extends TestCase
         Http::preventStrayRequests();
         Http::fake([
             'https://backend.test/api/v1/client/quotes/preview' => Http::response([
-                'options' => [['aircraft_id' => 101, 'total' => 55000]],
+                'options' => [['aircraft_id' => self::AIRCRAFT_UUID, 'total' => 55000]],
             ]),
         ]);
         $flight = $this->flightRequest();
@@ -116,6 +118,20 @@ class FlightApiServiceTest extends TestCase
         $this->assertSame([], app(FlightApiService::class)->searchFlights($this->flightRequest()));
     }
 
+    public function test_it_rejects_numeric_aircraft_ids_from_preview_options(): void
+    {
+        Http::fake([
+            'https://backend.test/api/v1/client/quotes/preview' => Http::response([
+                'options' => [[
+                    'aircraft_id' => 164500000000,
+                    'aircraft_name' => 'Malformed Jet',
+                ]],
+            ]),
+        ]);
+
+        $this->assertSame([], app(FlightApiService::class)->searchFlights($this->flightRequest()));
+    }
+
     public function test_it_sends_selected_aircraft_when_creating_flight_request(): void
     {
         Http::fake([
@@ -127,7 +143,7 @@ class FlightApiServiceTest extends TestCase
         ]);
 
         $flightRequest = $this->flightRequest([
-            'selected_aircraft_id' => 101,
+            'selected_aircraft_id' => self::AIRCRAFT_UUID,
             'selected_provider_id' => 201,
             'selected_match_id' => 'match-101',
             'official_quote_payload' => ['currency' => 'USD'],
@@ -138,7 +154,7 @@ class FlightApiServiceTest extends TestCase
         $this->assertSame(3001, $response['flight_request']['id']);
         Http::assertSent(fn ($request): bool => $request->url() === 'https://backend.test/api/v1/client/flight-requests'
             && $request->hasHeader('Authorization', 'Bearer plain-api-token')
-            && $request['aircraft_id'] === 101
+            && $request['aircraft_id'] === self::AIRCRAFT_UUID
             && $request['provider_id'] === 201
             && $request['match_id'] === 'match-101'
             && $request['currency'] === 'USD'

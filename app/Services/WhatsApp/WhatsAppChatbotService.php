@@ -2807,9 +2807,9 @@ class WhatsAppChatbotService
         }
 
         $selected = $results[$selectedIndex - 1];
-        $aircraftId = (int) ($selected['aircraft_id'] ?? 0);
+        $aircraftId = (string) ($selected['aircraft_id'] ?? '');
 
-        if ($aircraftId <= 0) {
+        if (! Str::isUuid($aircraftId)) {
             return ['state' => 'SEARCH_FLIGHTS', 'message' => 'Esa opción no tiene identificador válido. Responde continuar para buscar opciones actualizadas.'];
         }
 

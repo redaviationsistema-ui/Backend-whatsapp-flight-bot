@@ -93,7 +93,7 @@ class SqlQuoteDataRepository
             : $this->resolveAirport($base);
     }
 
-    public function isAircraftAvailable(int $aircraftId, string $startIso, string $endIso): bool
+    public function isAircraftAvailable(string $aircraftId, string $startIso, string $endIso): bool
     {
         return ! $this->hasReservationConflict($aircraftId, $startIso, $endIso)
             && ! $this->hasBlockedDate($startIso, $endIso);
@@ -102,7 +102,7 @@ class SqlQuoteDataRepository
     /**
      * @param  array<int, int|string>  $airportIds
      */
-    public function worstEligibilityStatus(int $aircraftId, array $airportIds): string
+    public function worstEligibilityStatus(string $aircraftId, array $airportIds): string
     {
         $table = (string) config('quote_engine.tables.aircraft_airport_eligibilities');
 
@@ -214,7 +214,7 @@ class SqlQuoteDataRepository
         return $table === (string) config('quote_engine.tables.national_airports');
     }
 
-    private function hasReservationConflict(int $aircraftId, string $startIso, string $endIso): bool
+    private function hasReservationConflict(string $aircraftId, string $startIso, string $endIso): bool
     {
         $table = (string) config('quote_engine.tables.reservations');
 

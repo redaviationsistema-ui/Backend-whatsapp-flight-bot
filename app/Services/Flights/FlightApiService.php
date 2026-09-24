@@ -46,15 +46,15 @@ class FlightApiService
         return collect($options)
             ->filter(fn ($option): bool => is_array($option))
             ->map(fn (array $option): array => $this->normalizeOption($option))
-            ->filter(fn (array $option): bool => (int) ($option['aircraft_id'] ?? 0) > 0)
+            ->filter(fn (array $option): bool => $this->isValidAircraftId($option['aircraft_id'] ?? null))
             ->values()
             ->all();
     }
 
-    public function checkAvailability(WhatsAppFlightRequest $flightRequest, int $aircraftId): ?array
+    public function checkAvailability(WhatsAppFlightRequest $flightRequest, string $aircraftId): ?array
     {
         return collect($this->searchFlights($flightRequest))
-            ->first(fn (array $option): bool => (int) ($option['aircraft_id'] ?? 0) === $aircraftId);
+            ->first(fn (array $option): bool => (string) ($option['aircraft_id'] ?? '') === $aircraftId);
     }
 
     /**
@@ -176,8 +176,10 @@ class FlightApiService
         $aircraft = is_array($option['aircraft'] ?? null) ? $option['aircraft'] : [];
         $pricing = is_array($option['pricing'] ?? null) ? $option['pricing'] : [];
 
+        $aircraftId = $option['aircraft_id'] ?? $aircraft['id'] ?? null;
+
         return [
-            'aircraft_id' => (int) ($option['aircraft_id'] ?? $aircraft['id'] ?? 0),
+            'aircraft_id' => filled($aircraftId) ? (string) $aircraftId : '',
             'provider_id' => isset($option['provider_id']) ? (int) $option['provider_id'] : null,
             'match_id' => (string) ($option['match_id'] ?? $option['id'] ?? 'preview-'.($option['aircraft_id'] ?? $aircraft['id'] ?? '')),
             'aircraft_name' => $option['aircraft_name'] ?? $option['aircraft'] ?? $option['name'] ?? $aircraft['model'] ?? $aircraft['name'] ?? 'Aeronave disponible',
@@ -191,6 +193,11 @@ class FlightApiService
             'currency' => $option['currency'] ?? $pricing['currency'] ?? null,
             'raw' => $option,
         ];
+    }
+
+    private function isValidAircraftId(mixed $aircraftId): bool
+    {
+        return is_string($aircraftId) && Str::isUuid($aircraftId);
     }
 
     /**

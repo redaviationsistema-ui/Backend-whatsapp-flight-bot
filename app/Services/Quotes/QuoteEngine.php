@@ -3,6 +3,7 @@
 namespace App\Services\Quotes;
 
 use DateTimeImmutable;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 class QuoteEngine
@@ -23,7 +24,7 @@ class QuoteEngine
         }
 
         $aircraft = collect($this->repository->activeAircraft());
-        $preferredAircraftId = isset($request['aircraft_preference_id']) ? (int) $request['aircraft_preference_id'] : null;
+        $preferredAircraftId = (string) ($request['aircraft_preference_id'] ?? '');
 
         $options = $aircraft
             ->map(fn (array $aircraft): ?array => $this->buildOption($aircraft, $legs, $passengers))
@@ -51,9 +52,9 @@ class QuoteEngine
      */
     private function buildOption(array $aircraft, array $legs, int $passengers): ?array
     {
-        $aircraftId = (int) $this->firstFilled($aircraft, ['id', 'aircraft_id']);
+        $aircraftId = (string) $this->firstFilled($aircraft, ['id', 'aircraft_id'], '');
 
-        if ($aircraftId <= 0 || $this->aircraftCapacity($aircraft) < $passengers) {
+        if (! Str::isUuid($aircraftId) || $this->aircraftCapacity($aircraft) < $passengers) {
             return null;
         }
 
@@ -468,13 +469,13 @@ class QuoteEngine
         return [];
     }
 
-    private function preferredSort(array $left, array $right, ?int $preferredAircraftId): int
+    private function preferredSort(array $left, array $right, string $preferredAircraftId): int
     {
-        if (! $preferredAircraftId) {
+        if ($preferredAircraftId === '') {
             return 0;
         }
 
-        return (int) ($right['aircraft_id'] === $preferredAircraftId) <=> (int) ($left['aircraft_id'] === $preferredAircraftId);
+        return (int) ((string) $right['aircraft_id'] === $preferredAircraftId) <=> (int) ((string) $left['aircraft_id'] === $preferredAircraftId);
     }
 
     private function distanceNm(array $origin, array $destination): float

@@ -21,11 +21,11 @@ class QuoteParityComparator
         $withinTolerance = 0;
 
         foreach (array_diff($legacyIds, $backendIds) as $aircraftId) {
-            $divergences[] = $this->divergence($inputIdentifier, (int) $aircraftId, 'matching.aircraft_missing_in_backend', true, false);
+            $divergences[] = $this->divergence($inputIdentifier, $aircraftId, 'matching.aircraft_missing_in_backend', true, false);
         }
 
         foreach (array_diff($backendIds, $legacyIds) as $aircraftId) {
-            $divergences[] = $this->divergence($inputIdentifier, (int) $aircraftId, 'matching.aircraft_extra_in_backend', false, true);
+            $divergences[] = $this->divergence($inputIdentifier, $aircraftId, 'matching.aircraft_extra_in_backend', false, true);
         }
 
         foreach (array_intersect($legacyIds, $backendIds) as $aircraftId) {
@@ -33,7 +33,7 @@ class QuoteParityComparator
                 $legacyOptions[$aircraftId],
                 $backendOptions[$aircraftId],
                 $inputIdentifier,
-                (int) $aircraftId,
+                $aircraftId,
             );
 
             $checks += $optionChecks;
@@ -56,9 +56,9 @@ class QuoteParityComparator
             'mode' => (string) config('quote_engine.web_mode', 'compare'),
             'quote_input_identifier' => $inputIdentifier,
             'matching' => [
-                'legacy_aircraft_ids' => array_map('intval', $legacyIds),
-                'backend_aircraft_ids' => array_map('intval', $backendIds),
-                'matched_aircraft_ids' => array_map('intval', array_values(array_intersect($legacyIds, $backendIds))),
+                'legacy_aircraft_ids' => array_values($legacyIds),
+                'backend_aircraft_ids' => array_values($backendIds),
+                'matched_aircraft_ids' => array_values(array_intersect($legacyIds, $backendIds)),
             ],
             'metrics' => [
                 'parity_checks' => $checks,
@@ -96,10 +96,10 @@ class QuoteParityComparator
     /**
      * @return array{0:int,1:int,2:int,3:array<int, array<string, mixed>>}
      */
-    private function compareOption(array $legacy, array $backend, ?string $inputIdentifier, int $aircraftId): array
+    private function compareOption(array $legacy, array $backend, ?string $inputIdentifier, string $aircraftId): array
     {
         $fields = [
-            ['aircraft_id', 'aircraft_id', 'integer'],
+            ['aircraft_id', 'aircraft_id', 'identifier'],
             ['customer_routes.count', 'customer_routes.count', 'integer'],
             ['ferry_routes.count', 'ferry_routes.count', 'integer'],
             ['pricing_breakdown.customer_flight_cost', 'pricing_breakdown.customer_flight_cost', 'money'],
@@ -135,7 +135,7 @@ class QuoteParityComparator
      * @param  array<int, array{0:string,1:string,2:string}>  $fields
      * @return array{0:int,1:int,2:int,3:array<int, array<string, mixed>>}
      */
-    private function compareFields(array $legacy, array $backend, array $fields, ?string $inputIdentifier, ?int $aircraftId): array
+    private function compareFields(array $legacy, array $backend, array $fields, ?string $inputIdentifier, ?string $aircraftId): array
     {
         $checks = 0;
         $exactMatches = 0;
@@ -202,7 +202,7 @@ class QuoteParityComparator
     /**
      * @return array<string, mixed>
      */
-    private function divergence(?string $inputIdentifier, ?int $aircraftId, string $field, mixed $legacyValue, mixed $backendValue, ?float $difference = null): array
+    private function divergence(?string $inputIdentifier, ?string $aircraftId, string $field, mixed $legacyValue, mixed $backendValue, ?float $difference = null): array
     {
         $percentageDifference = null;
 

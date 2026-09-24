@@ -20,6 +20,8 @@ class WhatsAppWebhookTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const AIRCRAFT_UUID = '16450000-0000-4000-8000-000000000001';
+
     public function test_it_validates_meta_webhook_challenge(): void
     {
         config(['services.whatsapp.verify_token' => 'secret-token']);
@@ -95,7 +97,7 @@ class WhatsAppWebhookTest extends TestCase
         $this->assertSame(5, $flightRequest->passengers);
         $this->assertSame('ONE_WAY', $flightRequest->trip_type);
         $this->assertSame('Gulfstream G-IV', $flightRequest->selected_aircraft);
-        $this->assertSame(101, $flightRequest->selected_aircraft_id);
+        $this->assertSame(self::AIRCRAFT_UUID, $flightRequest->selected_aircraft_id);
         $this->assertSame(201, $flightRequest->selected_provider_id);
         $this->assertSame('match-101', $flightRequest->selected_match_id);
         $this->assertSame(3001, $flightRequest->backend_flight_request_id);
@@ -114,7 +116,7 @@ class WhatsAppWebhookTest extends TestCase
             && is_array($request['legs']));
 
         Http::assertSent(fn ($request): bool => $request->url() === 'https://backend.test/api/v1/client/flight-requests'
-            && $request['aircraft_id'] === 101
+            && $request['aircraft_id'] === self::AIRCRAFT_UUID
             && $request['provider_id'] === 201
             && $request['match_id'] === 'match-101'
             && $request['idempotency_key'] === 'whatsapp-'.$flightRequest->id);
@@ -203,7 +205,7 @@ class WhatsAppWebhookTest extends TestCase
         return [
             'success' => true,
             'options' => [[
-                'aircraft_id' => 101,
+                'aircraft_id' => self::AIRCRAFT_UUID,
                 'provider_id' => 201,
                 'match_id' => 'match-101',
                 'aircraft_name' => 'Gulfstream G-IV',

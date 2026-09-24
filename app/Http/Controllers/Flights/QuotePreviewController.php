@@ -26,7 +26,7 @@ class QuotePreviewController extends Controller
             'legs.*.destination' => ['required_with:legs'],
             'legs.*.departure_datetime' => ['required_with:legs', 'date'],
             'legs.*.passengers' => ['nullable', 'integer', 'min:1'],
-            'aircraft_preference_id' => ['nullable', 'integer'],
+            'aircraft_preference_id' => ['nullable', 'uuid'],
             'allow_alternate_airports' => ['nullable', 'boolean'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:20'],
         ]);

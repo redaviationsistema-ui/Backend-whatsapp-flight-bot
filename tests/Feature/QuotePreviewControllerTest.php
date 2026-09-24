@@ -15,6 +15,12 @@ class QuotePreviewControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const AIRCRAFT_CJ3 = '11111111-1111-4111-8111-111111111111';
+
+    private const AIRCRAFT_HAWKER = '22222222-2222-4222-8222-222222222222';
+
+    private const AIRCRAFT_TINY = '33333333-3333-4333-8333-333333333333';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -63,7 +69,7 @@ class QuotePreviewControllerTest extends TestCase
             ->assertJsonPath('estimated_min', 27492.67)
             ->assertJsonPath('estimated_max', 31667.17)
             ->assertJsonCount(2, 'options')
-            ->assertJsonPath('options.0.aircraft_id', 101)
+            ->assertJsonPath('options.0.aircraft_id', self::AIRCRAFT_CJ3)
             ->assertJsonPath('options.0.aircraft_name', 'Citation CJ3')
             ->assertJsonPath('options.0.estimated_total', 27492.67)
             ->assertJsonPath('options.0.pricing_breakdown.customer_flight_cost', 8613.33)
@@ -83,7 +89,7 @@ class QuotePreviewControllerTest extends TestCase
 
         $response = $this->postJson('/api/v1/client/quotes/preview', [
             'passengers' => 4,
-            'aircraft_preference_id' => 202,
+            'aircraft_preference_id' => self::AIRCRAFT_HAWKER,
             'legs' => [[
                 'origin' => ['iata' => 'TLC'],
                 'destination' => ['iata' => 'CUN'],
@@ -93,7 +99,7 @@ class QuotePreviewControllerTest extends TestCase
 
         $response
             ->assertOk()
-            ->assertJsonPath('options.0.aircraft_id', 202)
+            ->assertJsonPath('options.0.aircraft_id', self::AIRCRAFT_HAWKER)
             ->assertJsonPath('options.0.estimated_total', 31667.17);
     }
 
@@ -102,8 +108,8 @@ class QuotePreviewControllerTest extends TestCase
         $this->seedAirports();
         $this->seedAircraft();
         $this->seedEligibility();
-        $this->insertReservation(101);
-        $this->insertBlockedEligibility(202, 2);
+        $this->insertReservation(self::AIRCRAFT_CJ3);
+        $this->insertBlockedEligibility(self::AIRCRAFT_HAWKER, 2);
 
         $response = $this->postJson('/api/v1/client/quotes/preview', [
             'passengers' => 4,
@@ -205,7 +211,7 @@ class QuotePreviewControllerTest extends TestCase
         $this->seedAirports();
         $this->seedEligibility();
         $this->quoteDb()->table('aircraft_fleet')->insert([
-            'id' => 404,
+            'id' => '44444444-4444-4444-8444-444444444444',
             'name' => 'Base IATA Jet',
             'aircraft_type' => 'JET LIGERO (LIGHT JET)',
             'capacity_passengers' => 7,
@@ -227,7 +233,7 @@ class QuotePreviewControllerTest extends TestCase
 
         $response
             ->assertOk()
-            ->assertJsonPath('options.0.aircraft_id', 404)
+            ->assertJsonPath('options.0.aircraft_id', '44444444-4444-4444-8444-444444444444')
             ->assertJsonPath('options.0.ferry_routes.0.origin.iata', 'MTY');
     }
 
@@ -236,7 +242,7 @@ class QuotePreviewControllerTest extends TestCase
         $this->seedAirports();
         $this->quoteDb()->table('aircraft_fleet')->insert([
             [
-                'id' => 501,
+                'id' => '55555555-5555-4555-8555-555555555551',
                 'name' => 'Operational Match',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 6,
@@ -249,7 +255,7 @@ class QuotePreviewControllerTest extends TestCase
                 'is_active' => true,
             ],
             [
-                'id' => 502,
+                'id' => '55555555-5555-4555-8555-555555555552',
                 'name' => 'Too Small',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 3,
@@ -262,7 +268,7 @@ class QuotePreviewControllerTest extends TestCase
                 'is_active' => true,
             ],
             [
-                'id' => 503,
+                'id' => '55555555-5555-4555-8555-555555555553',
                 'name' => 'Too Short Range',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 6,
@@ -275,7 +281,7 @@ class QuotePreviewControllerTest extends TestCase
                 'is_active' => true,
             ],
             [
-                'id' => 504,
+                'id' => '55555555-5555-4555-8555-555555555554',
                 'name' => 'Needs Longer Runway',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 6,
@@ -288,7 +294,7 @@ class QuotePreviewControllerTest extends TestCase
                 'is_active' => true,
             ],
             [
-                'id' => 505,
+                'id' => '55555555-5555-4555-8555-555555555555',
                 'name' => 'Too Low Elevation Limit',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 6,
@@ -314,7 +320,7 @@ class QuotePreviewControllerTest extends TestCase
         $response
             ->assertOk()
             ->assertJsonCount(1, 'options')
-            ->assertJsonPath('options.0.aircraft_id', 501);
+            ->assertJsonPath('options.0.aircraft_id', '55555555-5555-4555-8555-555555555551');
     }
 
     public function test_quote_engine_uses_quote_db_without_touching_default_aircraft_table(): void
@@ -337,7 +343,7 @@ class QuotePreviewControllerTest extends TestCase
 
         $response
             ->assertOk()
-            ->assertJsonPath('options.0.aircraft_id', 101);
+            ->assertJsonPath('options.0.aircraft_id', self::AIRCRAFT_CJ3);
     }
 
     public function test_preview_fails_fast_when_quote_db_is_not_configured(): void
@@ -409,7 +415,7 @@ class QuotePreviewControllerTest extends TestCase
         });
 
         $schema->create('aircraft_fleet', function (Blueprint $table): void {
-            $table->id();
+            $table->uuid('id')->primary();
             $table->string('name');
             $table->string('aircraft_type');
             $table->unsignedSmallInteger('capacity_passengers');
@@ -430,7 +436,7 @@ class QuotePreviewControllerTest extends TestCase
 
         $schema->create('reservations', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('aircraft_id');
+            $table->uuid('aircraft_id');
             $table->string('status');
             $table->dateTime('start_datetime');
             $table->dateTime('end_datetime');
@@ -443,7 +449,7 @@ class QuotePreviewControllerTest extends TestCase
 
         $schema->create('aircraft_airport_eligibilities', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('aircraft_id');
+            $table->uuid('aircraft_id');
             $table->foreignId('airport_id');
             $table->string('resultado_operacional');
         });
@@ -466,7 +472,7 @@ class QuotePreviewControllerTest extends TestCase
     {
         $this->quoteDb()->table('aircraft_fleet')->insert([
             [
-                'id' => 101,
+                'id' => self::AIRCRAFT_CJ3,
                 'name' => 'Citation CJ3',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 7,
@@ -479,7 +485,7 @@ class QuotePreviewControllerTest extends TestCase
                 'is_active' => true,
             ],
             [
-                'id' => 202,
+                'id' => self::AIRCRAFT_HAWKER,
                 'name' => 'Hawker 800XP',
                 'aircraft_type' => 'MIDSIZE JET (MID JET)',
                 'capacity_passengers' => 8,
@@ -492,7 +498,7 @@ class QuotePreviewControllerTest extends TestCase
                 'is_active' => true,
             ],
             [
-                'id' => 303,
+                'id' => self::AIRCRAFT_TINY,
                 'name' => 'Tiny Jet',
                 'aircraft_type' => 'JET LIGERO (LIGHT JET)',
                 'capacity_passengers' => 3,
@@ -509,7 +515,7 @@ class QuotePreviewControllerTest extends TestCase
 
     private function seedEligibility(): void
     {
-        foreach ([101, 202, 303] as $aircraftId) {
+        foreach ([self::AIRCRAFT_CJ3, self::AIRCRAFT_HAWKER, self::AIRCRAFT_TINY] as $aircraftId) {
             foreach ([1, 2, 3] as $airportId) {
                 $this->quoteDb()->table('aircraft_airport_eligibilities')->insert([
                     'aircraft_id' => $aircraftId,
@@ -520,7 +526,7 @@ class QuotePreviewControllerTest extends TestCase
         }
     }
 
-    private function insertReservation(int $aircraftId): void
+    private function insertReservation(string $aircraftId): void
     {
         $this->quoteDb()->table('reservations')->insert([
             'aircraft_id' => $aircraftId,
@@ -530,7 +536,7 @@ class QuotePreviewControllerTest extends TestCase
         ]);
     }
 
-    private function insertBlockedEligibility(int $aircraftId, int $airportId): void
+    private function insertBlockedEligibility(string $aircraftId, int $airportId): void
     {
         $this->quoteDb()->table('aircraft_airport_eligibilities')
             ->where('aircraft_id', $aircraftId)

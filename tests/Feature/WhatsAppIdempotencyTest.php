@@ -222,7 +222,7 @@ class WhatsAppIdempotencyTest extends TestCase
             'https://graph.facebook.com/*/123/messages' => Http::sequence()
                 ->push(['messages' => [['id' => 'out.search']]])
                 ->push(['messages' => [['id' => 'out.options']]]),
-            'https://backend.test/api/v1/client/quotes/preview' => Http::response(['options' => [['aircraft_id' => 101, 'aircraft_name' => 'Jet']]]),
+            'https://backend.test/api/v1/client/quotes/preview' => Http::response(['options' => [['aircraft_id' => '16450000-0000-4000-8000-000000000001', 'aircraft_name' => 'Jet']]]),
         ]);
         $conversation = WhatsAppConversation::factory()
             ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')

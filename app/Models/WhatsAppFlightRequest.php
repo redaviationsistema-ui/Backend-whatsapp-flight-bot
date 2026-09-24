@@ -61,7 +61,7 @@ class WhatsAppFlightRequest extends Model
             'passengers' => 'integer',
             'return_date' => 'date:Y-m-d',
             'search_results' => 'array',
-            'selected_aircraft_id' => 'integer',
+            'selected_aircraft_id' => 'string',
             'selected_provider_id' => 'integer',
             'backend_flight_request_id' => 'integer',
             'accepted_quote_id' => 'integer',
