@@ -118,6 +118,86 @@ class WhatsAppAdminTest extends TestCase
             ->assertJsonMissingPath('data.flight_request.official_quote_payload')->assertJsonStructure(['summary']);
     }
 
+    public function test_flight_requests_are_listed_for_whatsapp_admin_with_quote_summary(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+        $flight = WhatsAppFlightRequest::factory()->create([
+            'origin' => 'TLC',
+            'destination' => 'MTY',
+            'departure_date' => '2026-09-24',
+            'departure_time' => '12:00',
+            'passengers' => 3,
+            'trip_type' => 'one_way',
+            'selected_aircraft_id' => '01645e8c-0a40-496e-a4ec-cbbb77061722',
+            'selected_provider_id' => 201,
+            'selected_match_id' => 'match-101',
+            'status' => 'quoted',
+            'official_quote_payload' => [
+                'aircraft_name' => 'LEAR JET 31',
+                'display_time' => '02:20',
+                'total' => 6977,
+                'currency' => 'USD',
+                'pricing_breakdown' => ['total' => 6977],
+            ],
+        ]);
+
+        $response = $this->actingAs($admin)->getJson('/api/admin/whatsapp/flight-requests?per_page=1');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.0.id', $flight->id)
+            ->assertJsonPath('data.0.contact.phone_number', $flight->conversation->contact->phone_number)
+            ->assertJsonPath('data.0.route', 'TLC -> MTY')
+            ->assertJsonPath('data.0.aircraft_name', 'LEAR JET 31')
+            ->assertJsonPath('data.0.estimated_time', '02:20')
+            ->assertJsonPath('data.0.estimated_price', 6977)
+            ->assertJsonPath('data.0.currency', 'USD')
+            ->assertJsonPath('data.0.selected_aircraft_id', '01645e8c-0a40-496e-a4ec-cbbb77061722')
+            ->assertJsonPath('meta.total', 1);
+    }
+
+    public function test_flight_requests_can_be_filtered_and_show_full_quote_payload(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+        WhatsAppFlightRequest::factory()->create([
+            'origin' => 'TLC',
+            'destination' => 'CUN',
+            'status' => 'collecting',
+            'official_quote_payload' => ['aircraft_name' => 'Other Jet'],
+        ]);
+        $flight = WhatsAppFlightRequest::factory()->create([
+            'origin' => 'TLC',
+            'destination' => 'MTY',
+            'departure_date' => '2026-09-24',
+            'selected_aircraft' => 'Legacy 600',
+            'selected_aircraft_id' => '01645e8c-0a40-496e-a4ec-cbbb77061722',
+            'status' => 'quoted',
+            'official_quote_payload' => [
+                'aircraft_name' => 'LEAR JET 31',
+                'capacity_passengers' => 8,
+                'pricing' => ['totals' => ['estimated_hhmm' => '02:20']],
+                'pricing_breakdown' => ['customer_flight_cost' => 5000, 'total' => 6977],
+                'estimated_total' => 6977,
+                'currency' => 'USD',
+            ],
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/flight-requests?status=quoted&destination=MTY&aircraft=Legacy&date=2026-09-24')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $flight->id);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/whatsapp/flight-requests/'.$flight->id)
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.aircraft_capacity', 8)
+            ->assertJsonPath('data.estimated_time', '02:20')
+            ->assertJsonPath('data.pricing_breakdown.customer_flight_cost', 5000)
+            ->assertJsonPath('data.official_quote_payload.aircraft_name', 'LEAR JET 31');
+    }
+
     public function test_history_is_chronological_and_excludes_other_conversations(): void
     {
         $conversation = WhatsAppConversation::factory()->create();

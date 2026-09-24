@@ -3,6 +3,7 @@
 use App\Http\Controllers\Flights\QuoteParityController;
 use App\Http\Controllers\Flights\QuotePreviewController;
 use App\Http\Controllers\WhatsApp\WhatsAppAdminConversationController;
+use App\Http\Controllers\WhatsApp\WhatsAppAdminFlightRequestController;
 use App\Http\Controllers\WhatsApp\WhatsAppAdminSessionController;
 use App\Http\Controllers\WhatsApp\WhatsAppWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -41,4 +42,9 @@ Route::prefix('admin/whatsapp/conversations')->name('admin.whatsapp.conversation
     Route::post('/{conversation}/messages', [WhatsAppAdminConversationController::class, 'send'])->name('messages.store');
     Route::post('/{conversation}/takeover', [WhatsAppAdminConversationController::class, 'takeover'])->name('takeover');
     Route::post('/{conversation}/return-to-bot', [WhatsAppAdminConversationController::class, 'returnToBot'])->name('return-to-bot');
+});
+
+Route::prefix('admin/whatsapp/flight-requests')->name('admin.whatsapp.flight-requests.')->middleware('throttle:60,1')->group(function (): void {
+    Route::get('/', [WhatsAppAdminFlightRequestController::class, 'index'])->name('index');
+    Route::get('/{flightRequest}', [WhatsAppAdminFlightRequestController::class, 'show'])->name('show');
 });
