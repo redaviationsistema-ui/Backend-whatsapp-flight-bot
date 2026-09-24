@@ -161,6 +161,37 @@ class FlightApiServiceTest extends TestCase
             && $request['idempotency_key'] === 'whatsapp-'.$flightRequest->id);
     }
 
+    public function test_local_mode_creates_flight_request_without_self_http_request(): void
+    {
+        config(['flight_api.mode' => 'local']);
+        Http::preventStrayRequests();
+        $flightRequest = $this->flightRequest([
+            'selected_aircraft_id' => self::AIRCRAFT_UUID,
+            'selected_provider_id' => 201,
+            'selected_match_id' => 'match-101',
+            'official_quote_payload' => [
+                'aircraft_id' => self::AIRCRAFT_UUID,
+                'total' => 55000,
+                'currency' => 'USD',
+            ],
+        ]);
+
+        $response = app(FlightApiService::class)->createFlightRequest($flightRequest);
+        $flightRequest->refresh();
+
+        $this->assertTrue($response['success']);
+        $this->assertSame($flightRequest->id, $response['flight_request']['id']);
+        $this->assertSame($flightRequest->id, $response['accepted_quote']['id']);
+        $this->assertSame(self::AIRCRAFT_UUID, $response['accepted_quote']['aircraft_id']);
+        $this->assertSame(self::AIRCRAFT_UUID, $flightRequest->selected_aircraft_id);
+        $this->assertSame(201, $flightRequest->selected_provider_id);
+        $this->assertSame('match-101', $flightRequest->selected_match_id);
+        $this->assertSame('quoted', $flightRequest->status);
+        $this->assertSame(55000, $flightRequest->official_quote_payload['total']);
+        $this->assertSame('USD', $flightRequest->official_quote_payload['currency']);
+        Http::assertNothingSent();
+    }
+
     public function test_it_throws_for_unauthorized_backend_response(): void
     {
         $this->assertBackendStatusThrows(401);

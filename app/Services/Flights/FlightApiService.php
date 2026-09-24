@@ -14,7 +14,10 @@ use RuntimeException;
 
 class FlightApiService
 {
-    public function __construct(private readonly QuoteEngine $quoteEngine) {}
+    public function __construct(
+        private readonly QuoteEngine $quoteEngine,
+        private readonly FlightRequestService $flightRequestService,
+    ) {}
 
     /**
      * @return array<int, array<string, mixed>>
@@ -62,7 +65,13 @@ class FlightApiService
      */
     public function createFlightRequest(WhatsAppFlightRequest $flightRequest): array
     {
-        return $this->post('/api/v1/client/flight-requests', $this->flightRequestPayload($flightRequest));
+        $payload = $this->flightRequestPayload($flightRequest);
+
+        if ($this->mode() === 'local') {
+            return $this->flightRequestService->create($flightRequest, $payload);
+        }
+
+        return $this->post('/api/v1/client/flight-requests', $payload);
     }
 
     /**
