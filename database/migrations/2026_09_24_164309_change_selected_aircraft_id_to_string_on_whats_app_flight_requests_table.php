@@ -1,8 +1,6 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -11,9 +9,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('whats_app_flight_requests', function (Blueprint $table) {
-            $table->string('selected_aircraft_id')->nullable()->change();
-        });
+        // Superseded by the PostgreSQL-safe UUID conversion migration.
     }
 
     /**
@@ -21,8 +17,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('whats_app_flight_requests', function (Blueprint $table) {
-            $table->unsignedBigInteger('selected_aircraft_id')->nullable()->change();
-        });
+        // Intentionally irreversible: UUID values cannot be safely restored to bigint.
     }
 };
