@@ -32,7 +32,10 @@ class WhatsAppWebhookController extends Controller
 
     public function receive(Request $request): JsonResponse|Response
     {
-        Log::info('WhatsApp webhook POST received.', [
+        $correlationId = $this->correlationId($request);
+
+        Log::info('whatsapp_webhook_received', [
+            'correlation_id' => $correlationId,
             'object' => $request->input('object'),
             'has_entries' => ! empty($request->input('entry', [])),
             'queue_connection' => config('queue.default'),
@@ -42,7 +45,9 @@ class WhatsAppWebhookController extends Controller
         ]);
 
         if (! $this->hasValidMetaSignature($request)) {
-            Log::warning('WhatsApp webhook rejected because Meta signature is invalid.');
+            Log::warning('whatsapp_webhook_signature_rejected', [
+                'correlation_id' => $correlationId,
+            ]);
 
             return response('Forbidden', 403);
         }
@@ -50,7 +55,8 @@ class WhatsAppWebhookController extends Controller
         $payload = $request->all();
         $messageCount = $this->incomingMessageCount($payload);
 
-        Log::info('WhatsApp webhook payload inspected.', [
+        Log::info('whatsapp_webhook_payload_inspected', [
+            'correlation_id' => $correlationId,
             'object' => $payload['object'] ?? null,
             'message_count' => $messageCount,
             'first_from' => data_get($payload, 'entry.0.changes.0.value.messages.0.from'),
@@ -68,7 +74,8 @@ class WhatsAppWebhookController extends Controller
 
         ProcessWhatsAppMessage::dispatch($payload);
 
-        Log::info('WhatsApp webhook message payload dispatched.', [
+        Log::info('whatsapp_message_queued', [
+            'correlation_id' => $correlationId,
             'message_count' => $messageCount,
             'queue_connection' => config('queue.default'),
         ]);
@@ -121,5 +128,12 @@ class WhatsAppWebhookController extends Controller
         $expected = 'sha256='.hash_hmac('sha256', $request->getContent(), (string) $appSecret);
 
         return hash_equals($expected, $signature);
+    }
+
+    private function correlationId(Request $request): string
+    {
+        $messageId = (string) $request->input('entry.0.changes.0.value.messages.0.id');
+
+        return $messageId !== '' ? $messageId : 'webhook-'.substr(hash('sha256', $request->getContent()), 0, 16);
     }
 }

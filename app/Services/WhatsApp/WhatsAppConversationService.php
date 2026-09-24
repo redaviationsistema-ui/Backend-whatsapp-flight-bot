@@ -107,10 +107,17 @@ class WhatsAppConversationService
 
     public function transferToHuman(WhatsAppConversation $conversation): void
     {
+        $metadata = $conversation->metadata ?? [];
+        unset($metadata['pending_section_change']);
+
         $conversation->update([
             'state' => 'TRANSFER_TO_HUMAN',
             'is_active' => true,
-            'metadata' => [...($conversation->metadata ?? []), 'bot_state_before_transfer' => $conversation->state === 'TRANSFER_TO_HUMAN' ? ($conversation->metadata['bot_state_before_transfer'] ?? 'START') : $conversation->state],
+            'metadata' => [
+                ...$metadata,
+                'bot_state_before_transfer' => $conversation->state === 'TRANSFER_TO_HUMAN' ? ($metadata['bot_state_before_transfer'] ?? 'START') : $conversation->state,
+                'active_section_before_transfer' => $conversation->state === 'TRANSFER_TO_HUMAN' ? ($metadata['active_section_before_transfer'] ?? ($metadata['active_section'] ?? null)) : ($metadata['active_section'] ?? null),
+            ],
             'transferred_to_human_at' => now(),
             'last_message_at' => now(),
         ]);
@@ -121,10 +128,40 @@ class WhatsAppConversationService
         if (! $conversation->transferred_to_human_at && $conversation->state !== 'TRANSFER_TO_HUMAN') {
             return;
         }
+        $metadata = $conversation->metadata ?? [];
+        $activeSection = $metadata['active_section_before_transfer'] ?? null;
+
+        if ($activeSection === null) {
+            unset($metadata['active_section']);
+        } else {
+            $metadata['active_section'] = $activeSection;
+        }
+
+        if ($activeSection === 'ADVISOR') {
+            unset($metadata['active_section']);
+            unset($metadata['section_context']['ADVISOR']);
+            unset($metadata['bot_state_before_transfer']);
+            unset($metadata['active_section_before_transfer']);
+
+            if (($metadata['section_context'] ?? []) === []) {
+                unset($metadata['section_context']);
+            }
+
+            $conversation->update([
+                'state' => 'MAIN_MENU',
+                'is_active' => true,
+                'transferred_to_human_at' => null,
+                'metadata' => $metadata === [] ? null : $metadata,
+            ]);
+
+            return;
+        }
+
         $conversation->update([
             'state' => $conversation->metadata['bot_state_before_transfer'] ?? 'START',
             'is_active' => true,
             'transferred_to_human_at' => null,
+            'metadata' => $metadata === [] ? null : $metadata,
         ]);
     }
 

@@ -1,11 +1,9 @@
 <?php
 
+use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return response()->json([
-        'success' => true,
-        'service' => 'Sky Group WhatsApp API',
-        'status' => 'online',
-    ]);
-});
+Route::get('/health', [HealthController::class, 'ready'])->name('health');
+Route::get('/health/live', [HealthController::class, 'live'])->name('health.live');
+Route::get('/health/ready', [HealthController::class, 'ready'])->name('health.ready');
+Route::get('/', [HealthController::class, 'status'])->name('status');

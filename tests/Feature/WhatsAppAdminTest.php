@@ -2,6 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\AdvisorRequest;
+use App\Models\EngineRequest;
+use App\Models\PartRequest;
+use App\Models\SupportRequest;
 use App\Models\User;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppFlightRequest;
@@ -21,6 +25,7 @@ class WhatsAppAdminTest extends TestCase
     #[TestWith(['GET', '/{id}/messages'])]
     #[TestWith(['POST', '/{id}/messages'])]
     #[TestWith(['POST', '/{id}/takeover'])]
+    #[TestWith(['POST', '/{id}/transfer-to-human'])]
     #[TestWith(['POST', '/{id}/return-to-bot'])]
     public function test_conversation_routes_are_accessible_without_authentication(string $method, string $path): void
     {
@@ -196,6 +201,156 @@ class WhatsAppAdminTest extends TestCase
             ->assertJsonPath('data.estimated_time', '02:20')
             ->assertJsonPath('data.pricing_breakdown.customer_flight_cost', 5000)
             ->assertJsonPath('data.official_quote_payload.aircraft_name', 'LEAR JET 31');
+    }
+
+    public function test_whatsapp_admin_dashboard_counts_all_flow_modules(): void
+    {
+        $conversation = WhatsAppConversation::factory()->create(['is_active' => true, 'state' => 'TRANSFER_TO_HUMAN', 'transferred_to_human_at' => now()]);
+        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create();
+        PartRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'part_number' => 'PN-100',
+            'quantity' => 2,
+            'condition' => 'Nueva',
+            'status' => 'NUEVA',
+        ]);
+        EngineRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'engine_model' => 'PT6A',
+            'condition' => 'Usado',
+            'service_type' => 'Compra',
+            'status' => 'EN_ATENCION',
+        ]);
+        SupportRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'reason' => 'postventa',
+            'description' => 'Seguimiento',
+            'priority' => 'normal',
+            'status' => 'NUEVA',
+        ]);
+        AdvisorRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'reason' => 'asesor',
+            'comments' => 'Llamar',
+            'status' => 'NUEVA',
+        ]);
+
+        $this->getJson('/api/admin/whatsapp/dashboard')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.conversations.total', 1)
+            ->assertJsonPath('data.conversations.human', 1)
+            ->assertJsonPath('data.flight_quotes.total', 1)
+            ->assertJsonPath('data.parts.total', 1)
+            ->assertJsonPath('data.engines.in_progress', 1)
+            ->assertJsonPath('data.support.new', 1)
+            ->assertJsonPath('data.advisor.total', 1);
+    }
+
+    public function test_whatsapp_admin_request_lists_detail_and_status_update(): void
+    {
+        $conversation = WhatsAppConversation::factory()->create();
+        $part = PartRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'part_number' => 'ABC-123',
+            'description' => 'Filtro',
+            'quantity' => 1,
+            'condition' => 'Nueva',
+            'status' => 'NUEVA',
+        ]);
+        PartRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'part_number' => 'ZZZ-999',
+            'quantity' => 1,
+            'condition' => 'Usada',
+            'status' => 'CERRADA',
+        ]);
+
+        $this->getJson('/api/admin/whatsapp/parts?search=ABC&status=NUEVA')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $part->id)
+            ->assertJsonPath('data.0.contact.phone_number', $conversation->contact->phone_number);
+
+        $this->getJson('/api/admin/whatsapp/parts/'.$part->id)
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.part_number', 'ABC-123');
+
+        $this->patchJson('/api/admin/whatsapp/parts/'.$part->id.'/status', ['status' => 'EN_ATENCION'])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.status', 'EN_ATENCION');
+        $this->assertDatabaseHas('parts_requests', ['id' => $part->id, 'status' => 'EN_ATENCION']);
+
+        $this->patchJson('/api/admin/whatsapp/parts/'.$part->id.'/status', ['status' => 'INVALIDA'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('status');
+    }
+
+    public function test_whatsapp_admin_lists_engines_support_and_advisor_requests(): void
+    {
+        $conversation = WhatsAppConversation::factory()->create();
+        $engine = EngineRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'engine_model' => 'PT6A',
+            'part_number' => 'PT6-01',
+            'condition' => 'Usado',
+            'service_type' => 'Mantenimiento',
+            'status' => 'NUEVA',
+        ]);
+        $support = SupportRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'reason' => 'facturacion',
+            'reference' => 'FAC-1',
+            'description' => 'Ayuda',
+            'priority' => 'alta',
+            'status' => 'PENDIENTE',
+        ]);
+        $advisor = AdvisorRequest::query()->create([
+            'whats_app_conversation_id' => $conversation->id,
+            'whats_app_contact_id' => $conversation->whats_app_contact_id,
+            'reason' => 'ventas',
+            'reference' => 'REF-1',
+            'comments' => 'Quiere asesor',
+            'status' => 'NUEVA',
+            'transferred_at' => now(),
+        ]);
+
+        $this->getJson('/api/admin/whatsapp/engines?service_type=Mantenimiento')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $engine->id)
+            ->assertJsonPath('data.0.engine_model', 'PT6A');
+        $this->getJson('/api/admin/whatsapp/support?priority=alta')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $support->id)
+            ->assertJsonPath('data.0.reference', 'FAC-1');
+        $this->getJson('/api/admin/whatsapp/advisor-requests?transferred=1')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $advisor->id)
+            ->assertJsonPath('data.0.transferred_at', $advisor->transferred_at->toJSON());
+    }
+
+    public function test_global_whatsapp_history_is_paginated_without_internal_payloads(): void
+    {
+        $conversation = WhatsAppConversation::factory()->create();
+        $message = WhatsAppMessage::factory()->for($conversation, 'conversation')->create(['body' => 'Historial', 'processing_context' => ['private' => true]]);
+
+        $this->getJson('/api/admin/whatsapp/history?per_page=1')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.0.id', 'message-'.$message->id)
+            ->assertJsonPath('data.0.contact.phone_number', $conversation->contact->phone_number)
+            ->assertJsonMissingPath('data.0.processing_context')
+            ->assertJsonPath('meta.total', 1);
     }
 
     public function test_history_is_chronological_and_excludes_other_conversations(): void

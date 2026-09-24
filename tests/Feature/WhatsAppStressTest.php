@@ -55,13 +55,13 @@ class WhatsAppStressTest extends TestCase
         $this->assertSame('Cancún', $flight->destination);
         $this->assertSame('2026-09-25', $flight->departure_date->toDateString());
         $this->assertSame('20:00:00', $flight->departure_time);
-        $this->assertSame(7, $flight->passengers);
+        $this->assertSame(8, $flight->passengers);
         $this->assertSame('ONE_WAY', $flight->trip_type);
         $this->assertNull($flight->return_date);
         $this->assertNull($flight->return_time);
         $this->assertSame('SHOW_SUMMARY', $flight->conversation->refresh()->state);
         $this->assertStringContainsString('Toluca', $summary);
-        $this->assertStringContainsString('7 pasajeros', $summary);
+        $this->assertStringContainsString('8 pasajeros', $summary);
     }
 
     /** @return array{state:string,message:string} */

@@ -21,6 +21,8 @@ class WhatsAppAdminFlightRequestController extends Controller
             'aircraft' => ['sometimes', 'nullable', 'string', 'max:100'],
             'status' => ['sometimes', 'nullable', 'string', 'max:50'],
             'date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'date_from' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'date_to' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
         ]);
 
         $query = WhatsAppFlightRequest::query()
@@ -43,6 +45,8 @@ class WhatsAppAdminFlightRequestController extends Controller
             }))
             ->when($data['status'] ?? null, fn (Builder $query, string $status): Builder => $query->where('status', $status))
             ->when($data['date'] ?? null, fn (Builder $query, string $date): Builder => $query->whereDate('departure_date', $date))
+            ->when($data['date_from'] ?? null, fn (Builder $query, string $date): Builder => $query->whereDate('created_at', '>=', $date))
+            ->when($data['date_to'] ?? null, fn (Builder $query, string $date): Builder => $query->whereDate('created_at', '<=', $date))
             ->orderByDesc('created_at')
             ->orderByDesc('id');
 

@@ -266,13 +266,13 @@ class WhatsAppMasterBehaviorTest extends TestCase
         $snapshot = $flight->only(['departure_time', 'trip_type', 'client_name', 'client_email']);
 
         $this->answer($flight, 'somos 5 no 4');
-        $this->answer($flight, 'mejor Cancún');
+        $this->answer($flight, 'cambia destino a Cancún');
         $this->answer($flight, 'salgo de Toluca, no CDMX');
         $this->answer($flight, 'mejor el sábado');
 
         $flight->refresh();
         $this->assertSame(5, $flight->passengers);
-        $this->assertSame('Cancún', $flight->destination);
+        $this->assertSame('Mérida', $flight->destination);
         $this->assertSame('Toluca', $flight->origin);
         $this->assertSame('2026-09-26', $flight->departure_date->toDateString());
         foreach ($snapshot as $field => $value) {
@@ -311,7 +311,7 @@ class WhatsAppMasterBehaviorTest extends TestCase
         $this->assertNull($flight->refresh()->{$field});
     }
 
-    #[TestWith(['cancelar', 'CANCELLED'])]
+    #[TestWith(['cancelar', 'MAIN_MENU'])]
     #[TestWith(['empezar de nuevo', 'ASK_ORIGIN'])]
     #[TestWith(['quiero otro vuelo', 'ASK_ORIGIN'])]
     public function test_cancel_and_restart_commands_are_global(string $input, string $expectedState): void
@@ -362,7 +362,7 @@ class WhatsAppMasterBehaviorTest extends TestCase
         $inbound = WhatsAppMessage::query()->where('message_id', 'in.meta-'.$status)->sole();
         $this->assertNull($inbound->processed_at);
         $this->assertDatabaseMissing('whats_app_messages', ['direction' => 'outbound']);
-        $this->assertSame('ASK_ORIGIN', $inbound->conversation->state);
+        $this->assertSame('MAIN_MENU', $inbound->conversation->state);
     }
 
     public function test_summary_and_payload_match_and_exclude_legacy_fields(): void

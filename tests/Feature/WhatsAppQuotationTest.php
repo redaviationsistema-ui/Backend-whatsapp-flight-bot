@@ -226,7 +226,19 @@ class WhatsAppQuotationTest extends TestCase
     {
         Http::preventStrayRequests();
         Http::fake(['https://backend.test/*' => Http::response([])]);
-        $flight = WhatsAppFlightRequest::factory()->for(WhatsAppConversation::factory()->state(['state' => 'SEARCH_FLIGHTS']), 'conversation')->create(['origin' => 'Toluca']);
+        $flight = WhatsAppFlightRequest::factory()->for(WhatsAppConversation::factory()->state(['state' => 'SEARCH_FLIGHTS']), 'conversation')->create([
+            'origin' => 'Toluca',
+            'destination' => 'Cancún',
+            'departure_date' => '2026-10-02',
+            'departure_time' => '15:00:00',
+            'passengers' => 4,
+            'trip_type' => 'ONE_WAY',
+            'is_time_flexible' => true,
+            'allow_alternate_airports' => true,
+            'other_services' => 'Ninguno',
+            'client_name' => 'Juan Pérez',
+            'client_email' => 'juan@example.com',
+        ]);
 
         $result = $this->answer($flight, '1');
 
@@ -599,7 +611,7 @@ class WhatsAppQuotationTest extends TestCase
     private function collect(string $trip): WhatsAppFlightRequest
     {
         $flight = WhatsAppFlightRequest::factory()->create();
-        $answers = ['hola', 'Toluca', 'Cancún', '2 de octubre', '3 de la tarde', $trip];
+        $answers = ['hola', '1', 'Toluca', 'Cancún', '2 de octubre', '3 de la tarde', $trip];
         $answers = [...$answers, ...match ($trip) {
             '2' => ['2026-10-05', '17:00'],
             '3' => ['Monterrey', '2026-10-05', '15:00', 'Toluca', '2026-10-07', '14:30', 'listo'],

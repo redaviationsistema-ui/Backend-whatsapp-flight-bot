@@ -112,8 +112,8 @@ class WhatsAppService
             $url = "https://graph.facebook.com/{$apiVersion}/{$phoneNumberId}/messages";
 
             Log::info('Sending WhatsApp message through Meta API.', [
-                'url' => $url,
-                'to' => $payload['to'] ?? null,
+                'event' => 'whatsapp_reply_sent_attempt',
+                'to_last4' => substr((string) ($payload['to'] ?? ''), -4),
                 'type' => $payload['type'] ?? null,
                 'body_length' => strlen((string) data_get($payload, 'text.body', '')),
                 'api_version' => $apiVersion,
@@ -126,15 +126,16 @@ class WhatsAppService
                 ->timeout(15)
                 ->post($url, $payload);
 
-            Log::info('Meta WhatsApp API response received.', [
+            Log::info('whatsapp_reply_sent', [
                 'status' => $response->status(),
-                'response' => $response->json(),
+                'message_id' => $response->json('messages.0.id'),
             ]);
 
             if (! $response->successful() || $response->json('error') !== null || ! is_string($response->json('messages.0.id')) || $response->json('messages.0.id') === '') {
-                Log::error('WhatsApp Meta API error.', [
+                Log::error('whatsapp_reply_failed', [
                     'status' => $response->status(),
-                    'response' => $response->json(),
+                    'error_code' => $response->json('error.code'),
+                    'error_type' => $response->json('error.type'),
                 ]);
 
                 if ($response->json('error') !== null || $response->clientError()) {

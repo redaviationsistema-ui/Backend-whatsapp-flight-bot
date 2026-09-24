@@ -34,7 +34,7 @@ class WhatsAppDeliveryTest extends TestCase
         } catch (RuntimeException) {
             $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'in.retry', 'processed_at' => null]);
             $this->assertDatabaseCount('whats_app_messages', 1);
-            $this->assertDatabaseHas('whats_app_conversations', ['state' => 'ASK_ORIGIN']);
+            $this->assertDatabaseHas('whats_app_conversations', ['state' => 'MAIN_MENU']);
         }
         $this->process('in.retry', 'Hola');
         $this->process('in.retry', 'Hola');

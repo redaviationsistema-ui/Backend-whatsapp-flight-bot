@@ -45,9 +45,19 @@ class ProcessWhatsAppMessage implements ShouldQueue
             if ($messageId === '' || $from === '') {
                 continue;
             }
+            Log::info('whatsapp_message_processing_started', [
+                'correlation_id' => $messageId,
+                'incoming_message_id' => $messageId,
+                'from_last4' => substr($from, -4),
+            ]);
             $conversationService->withContactLock($from, function () use ($payload, $message, $messageId, $from, $conversationService, $messageService, $chatbotService, $whatsAppService): void {
                 $inbound = WhatsAppMessage::query()->where('message_id', $messageId)->first();
                 if ($inbound?->processed_at) {
+                    Log::info('whatsapp_message_duplicate', [
+                        'correlation_id' => $messageId,
+                        'incoming_message_id' => $messageId,
+                        'conversation_id' => $inbound->whats_app_conversation_id,
+                    ]);
                     $this->logAction($inbound, 'skip_processed');
 
                     return;
@@ -156,7 +166,8 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
     private function logAction(WhatsAppMessage $inbound, string $action): void
     {
-        Log::info('WhatsApp inbound processing.', [
+        Log::info('whatsapp_message_processing_event', [
+            'correlation_id' => $inbound->message_id,
             'incoming_message_id' => $inbound->message_id,
             'conversation_id' => $inbound->whats_app_conversation_id,
             'state' => $inbound->processing_context['pending_state'] ?? $inbound->conversation->state,
@@ -166,7 +177,11 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
     public function failed(?Throwable $exception): void
     {
-        Log::error('WhatsApp message processing exhausted retries.', ['exception_type' => $exception ? $exception::class : null]);
+        Log::error('whatsapp_message_failed', [
+            'message_id' => data_get($this->messagePayloads(), '0.message.id'),
+            'exception_class' => $exception ? $exception::class : null,
+            'failed_at' => now()->toJSON(),
+        ]);
     }
 
     /**

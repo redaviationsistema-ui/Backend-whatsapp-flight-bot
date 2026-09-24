@@ -41,13 +41,13 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->webhook()->assertOk()->assertJson(['received' => true]);
 
         $this->assertDatabaseCount('whats_app_messages', 2);
-        $this->assertSame('ASK_ORIGIN', WhatsAppConversation::query()->sole()->state);
+        $this->assertSame('MAIN_MENU', WhatsAppConversation::query()->sole()->state);
         $this->assertNull(WhatsAppFlightRequest::query()->sole()->origin);
         $this->assertNotNull(WhatsAppMessage::query()->where('message_id', 'in.once')->sole()->processed_at);
         Http::assertSentCount(1);
         Log::shouldHaveReceived('info')->with('WhatsApp inbound processing.', \Mockery::on(fn (array $context): bool => $context['incoming_message_id'] === 'in.once'
             && $context['conversation_id'] === WhatsAppConversation::query()->sole()->id
-            && $context['state'] === 'ASK_ORIGIN'
+            && $context['state'] === 'MAIN_MENU'
             && $context['action'] === 'skip_processed'
         ))->once();
     }
@@ -123,7 +123,7 @@ class WhatsAppIdempotencyTest extends TestCase
 
         $this->assertDatabaseCount('whats_app_messages', 1);
         $this->assertDatabaseHas('whats_app_messages', ['message_id' => 'in.once', 'processed_at' => null]);
-        $this->assertSame('ASK_ORIGIN', WhatsAppConversation::query()->sole()->state);
+        $this->assertSame('MAIN_MENU', WhatsAppConversation::query()->sole()->state);
         Http::assertNothingSent();
     }
 
@@ -351,15 +351,15 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.hola', 'text' => ['body' => 'Hola']]]])->assertOk();
 
         $flight = $conversation->flightRequest()->sole();
-        $this->assertSame('ASK_ORIGIN', $conversation->refresh()->state);
-        $this->assertNull($flight->refresh()->origin);
-        $this->assertNull($flight->destination);
-        $this->assertNull($flight->departure_date);
+        $this->assertSame('MAIN_MENU', $conversation->refresh()->state);
+        $this->assertSame('Toluca', $flight->refresh()->origin);
+        $this->assertSame('Cancún', $flight->destination);
+        $this->assertSame('2026-10-02', $flight->departure_date->toDateString());
         $this->assertNull($staleInbound->refresh()->processed_at);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.hola',
             'direction' => 'outbound',
-            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?",
+            'body' => "Hola 👋\nBienvenido a Red Aviation Company.\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor",
         ]);
         $this->assertDatabaseMissing('whats_app_messages', ['body' => '¿Cuál es el destino?']);
         Http::assertSentCount(1);

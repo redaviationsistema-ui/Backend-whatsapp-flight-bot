@@ -82,11 +82,11 @@ class WhatsAppWebhookTest extends TestCase
             ]),
         ]);
 
-        $answers = ['Hola', 'Toluca', 'Cancun', '2026-10-15', '14:30', 'solo ida', '5', 'sin preferencia', 'sí', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', 'continuar', 'continuar', '1', 'continuar'];
+        $answers = ['Hola', '1', 'Toluca', 'Cancun', '2026-10-15', '14:30', 'solo ida', '5', 'sin preferencia', 'sí', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', 'continuar', 'continuar', '1', 'continuar'];
         foreach ($answers as $index => $answer) {
             $this->process('wamid.'.($index + 1), $answer);
         }
-        $this->process('wamid.21', 'continuar');
+        $this->process('wamid.22', 'continuar');
 
         $conversation = WhatsAppConversation::query()->firstOrFail();
         $flightRequest = WhatsAppFlightRequest::query()->firstOrFail();
@@ -104,7 +104,7 @@ class WhatsAppWebhookTest extends TestCase
         $this->assertSame(4001, $flightRequest->accepted_quote_id);
         $this->assertSame('QUOTE-4001', $flightRequest->quote_reference);
         $this->assertSame('quoted', $flightRequest->status);
-        $this->assertCount(1, WhatsAppMessage::query()->where('message_id', 'wamid.21')->get());
+        $this->assertCount(1, WhatsAppMessage::query()->where('message_id', 'wamid.22')->get());
 
         Http::assertSent(fn ($request): bool => $request->url() === 'https://backend.test/api/v1/client/quotes/preview'
             && $request->hasHeader('Authorization', 'Bearer plain-api-token')
@@ -137,7 +137,7 @@ class WhatsAppWebhookTest extends TestCase
 
         $conversation = WhatsAppConversation::query()->firstOrFail();
 
-        $this->assertSame('ASK_ORIGIN', $conversation->state);
+        $this->assertSame('MAIN_MENU', $conversation->state);
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'wamid.hola',
             'direction' => 'inbound',
@@ -146,7 +146,7 @@ class WhatsAppWebhookTest extends TestCase
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.hola',
             'direction' => 'outbound',
-            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n¿Desde qué ciudad o aeropuerto deseas salir?",
+            'body' => "Hola 👋\nBienvenido a Red Aviation Company.\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor",
         ]);
     }
 
