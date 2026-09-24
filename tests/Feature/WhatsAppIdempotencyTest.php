@@ -359,7 +359,7 @@ class WhatsAppIdempotencyTest extends TestCase
         $this->assertDatabaseHas('whats_app_messages', [
             'message_id' => 'out.hola',
             'direction' => 'outbound',
-            'body' => "Hola 👋\nBienvenido a Red Aviation Company.\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor",
+            'body' => "¡Hola! Bienvenido a Sky Group Aviation ✈️\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor",
         ]);
         $this->assertDatabaseMissing('whats_app_messages', ['body' => '¿Cuál es el destino?']);
         Http::assertSentCount(1);

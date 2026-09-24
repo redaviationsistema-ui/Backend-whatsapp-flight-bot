@@ -35,11 +35,27 @@ class WhatsAppFlowRouterTest extends TestCase
         $flight = WhatsAppFlightRequest::factory()
             ->for(WhatsAppConversation::factory()->state(['state' => 'START']), 'conversation')
             ->create();
+        $this->mock(FlightQuoteFlowHandler::class, function ($mock): void {
+            $mock->shouldNotReceive('handle');
+        });
+
+        $result = app(WhatsAppChatbotService::class)->handleIncomingMessage($flight->conversation, $flight, '.');
+
+        $this->assertSame('MAIN_MENU', $result['state']);
+        $this->assertStringContainsString('1. Cotización de vuelo', $result['message']);
+        $this->assertNull($flight->conversation->refresh()->metadata);
+    }
+
+    public function test_start_greeting_shows_main_menu(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'START']), 'conversation')
+            ->create();
 
         $result = app(WhatsAppChatbotService::class)->handleIncomingMessage($flight->conversation, $flight, 'hola');
 
         $this->assertSame('MAIN_MENU', $result['state']);
-        $this->assertStringContainsString('1. Cotización de vuelo', $result['message']);
+        $this->assertStringContainsString('¿En qué podemos ayudarte?', $result['message']);
         $this->assertNull($flight->conversation->refresh()->metadata);
     }
 
@@ -84,6 +100,26 @@ class WhatsAppFlowRouterTest extends TestCase
         $result = app(WhatsAppChatbotService::class)->handleIncomingMessage($flight->conversation, $flight, 'Toluca');
 
         $this->assertSame(['state' => 'ASK_DESTINATION', 'message' => 'handler-ok'], $result);
+    }
+
+    public function test_legacy_flight_state_without_active_section_restores_flight(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_ORIGIN']), 'conversation')
+            ->create();
+        $this->mock(FlightQuoteFlowHandler::class, function ($mock) use ($flight): void {
+            $mock->shouldReceive('handle')
+                ->once()
+                ->withArgs(fn (WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $message): bool => $conversation->is($flight->conversation)
+                    && $flightRequest->is($flight)
+                    && $message === 'Toluca')
+                ->andReturn(['state' => 'ASK_DESTINATION', 'message' => 'handler-ok']);
+        });
+
+        $result = app(WhatsAppChatbotService::class)->handleIncomingMessage($flight->conversation, $flight, 'Toluca');
+
+        $this->assertSame(['state' => 'ASK_DESTINATION', 'message' => 'handler-ok'], $result);
+        $this->assertSame('FLIGHT', $flight->conversation->refresh()->metadata['active_section']);
     }
 
     public function test_main_menu_parts_option_does_not_execute_flight_quote_flow_handler(): void

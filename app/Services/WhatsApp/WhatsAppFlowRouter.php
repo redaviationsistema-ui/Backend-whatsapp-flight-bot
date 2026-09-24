@@ -165,16 +165,10 @@ class WhatsAppFlowRouter
             return $this->handlePendingSectionChange($conversation, $flightRequest, $normalized);
         }
 
-        if ($conversation->state === 'START' && $activeSection === null) {
-            if ($this->isGreeting($normalized)) {
-                $this->setActiveSection($conversation, null);
+        if ($conversation->state === 'START') {
+            $this->setActiveSection($conversation, null);
 
-                return ['state' => self::MainMenu, 'message' => $this->mainMenuMessage()];
-            }
-
-            $this->setActiveSection($conversation, self::SectionFlight);
-
-            return $this->flightQuoteFlowHandler->handle($conversation, $flightRequest, $message);
+            return ['state' => self::MainMenu, 'message' => $this->mainMenuMessage()];
         }
 
         if ($conversation->state === self::MainMenu && $activeSection === null) {
@@ -230,7 +224,7 @@ class WhatsAppFlowRouter
 
     public function mainMenuMessage(): string
     {
-        return "Hola 👋\nBienvenido a Red Aviation Company.\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor";
+        return "¡Hola! Bienvenido a Sky Group Aviation ✈️\n\n¿En qué podemos ayudarte?\n\n1. Cotización de vuelo\n2. Partes y refacciones\n3. Motores\n4. Atención / soporte\n5. Información\n6. Hablar con un asesor";
     }
 
     private function routeMainMenuOption(WhatsAppConversation $conversation, WhatsAppFlightRequest $flightRequest, string $normalized): array
