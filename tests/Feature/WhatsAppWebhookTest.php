@@ -82,7 +82,7 @@ class WhatsAppWebhookTest extends TestCase
             ]),
         ]);
 
-        $answers = ['Hola', '1', 'Toluca', 'Cancun', '2026-10-15', '14:30', 'solo ida', '5', 'sin preferencia', 'sí', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', 'continuar', 'continuar', '1', 'continuar'];
+        $answers = ['Hola', '1', 'Toluca', 'Cancun', '2026-10-15', '14:30', '1', '5', 'sin preferencia', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', 'omitir', 'ninguna', '1', 'continuar', 'continuar', '1', 'continuar'];
         foreach ($answers as $index => $answer) {
             $this->process('wamid.'.($index + 1), $answer);
         }

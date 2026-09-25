@@ -21,14 +21,12 @@ class FlightQuoteFlowHandler
         'ASK_DESTINATION' => ['field' => 'destination', 'label' => 'Destino', 'prompt' => '¿Cuál es el destino?', 'type' => 'location'],
         'ASK_DEPARTURE_DATE' => ['field' => 'departure_date', 'label' => 'Fecha de salida', 'prompt' => '¿Qué día quieres salir?', 'type' => 'date'],
         'ASK_DEPARTURE_TIME' => ['field' => 'departure_time', 'label' => 'Hora de salida', 'prompt' => '¿A qué hora te gustaría salir?', 'type' => 'time'],
-        'ASK_TRIP_TYPE' => ['field' => 'trip_type', 'label' => 'Viaje', 'prompt' => '¿Será sólo ida, ida y vuelta o multidestino?', 'type' => 'trip'],
+        'ASK_TRIP_TYPE' => ['field' => 'trip_type', 'label' => 'Viaje', 'prompt' => 'Selecciona el tipo de viaje.', 'type' => 'trip'],
         'ASK_RETURN_DATE' => ['field' => 'return_date', 'label' => 'Fecha de regreso', 'prompt' => '¿Qué día quieres regresar?', 'type' => 'date'],
         'ASK_RETURN_TIME' => ['field' => 'return_time', 'label' => 'Hora de regreso', 'prompt' => '¿A qué hora te gustaría regresar?', 'type' => 'time'],
         'ASK_LEGS' => ['field' => 'legs', 'label' => 'Tramos adicionales', 'prompt' => '¿Quieres agregar alguna escala o parada adicional?', 'type' => 'legs'],
         'ASK_PASSENGERS' => ['field' => 'passengers', 'label' => 'Pasajeros', 'prompt' => '¿Cuántas personas viajan?', 'type' => 'passengers'],
         'ASK_AIRCRAFT_PREFERENCE' => ['field' => 'aircraft_preference', 'label' => 'Aeronave', 'prompt' => '¿Tienes preferencia de aeronave?', 'type' => 'text'],
-        'ASK_TIME_FLEXIBILITY' => ['field' => 'is_time_flexible', 'label' => 'Horario flexible', 'prompt' => '¿Tu horario es flexible? Sí o no.', 'type' => 'boolean'],
-        'ASK_ALTERNATE_AIRPORTS' => ['field' => 'allow_alternate_airports', 'label' => 'Aeropuertos alternos', 'prompt' => '¿Aceptas aeropuertos alternos? Sí o no.', 'type' => 'boolean'],
         'ASK_OTHER_SERVICES' => ['field' => 'other_services', 'label' => 'Otros servicios', 'prompt' => '¿Necesitas otros servicios o escalas técnicas?', 'type' => 'text'],
         'ASK_NAME' => ['field' => 'client_name', 'label' => 'Nombre', 'prompt' => '¿Cuál es tu nombre completo?', 'type' => 'text'],
         'ASK_EMAIL' => ['field' => 'client_email', 'label' => 'Correo', 'prompt' => '¿Cuál es tu correo electrónico?', 'type' => 'email'],
@@ -833,11 +831,13 @@ class FlightQuoteFlowHandler
         $metadata = $conversation->metadata ?? [];
         unset($metadata['pending_time_options']);
         $conversation->update(['metadata' => $metadata]);
+        $flightRequest->refresh();
+        $next = $this->nextMissingState($flightRequest);
 
         return $this->continueFromMissing(
             $conversation,
-            $flightRequest->refresh(),
-            'Perfecto, dejamos la salida a las '.$this->displayTime($time).'.'
+            $flightRequest,
+            $next === 'ASK_TRIP_TYPE' ? null : 'Perfecto, dejamos la salida a las '.$this->displayTime($time).'.'
         );
     }
 
@@ -1168,6 +1168,7 @@ class FlightQuoteFlowHandler
             'ASK_DEPARTURE_DATE' => $flightRequest->origin && $flightRequest->destination
                 ? "Perfecto, {$flightRequest->origin} → {$flightRequest->destination}. ¿Para qué día tienes pensado viajar?"
                 : self::QUESTIONS[$state]['prompt'],
+            'ASK_TRIP_TYPE' => $this->tripTypePrompt($flightRequest),
             'ASK_LEGS' => $this->nextIncompleteLeg($flightRequest)
                 ? $this->incompleteLegPrompt($flightRequest)
                 : self::QUESTIONS[$state]['prompt'],
@@ -1179,6 +1180,10 @@ class FlightQuoteFlowHandler
 
     private function decoratePrompt(string $state, string $prompt): string
     {
+        if ($state === 'ASK_TRIP_TYPE') {
+            return $prompt;
+        }
+
         if (preg_match('/^\p{So}/u', $prompt) === 1) {
             return $prompt;
         }
@@ -1192,7 +1197,6 @@ class FlightQuoteFlowHandler
             'ASK_LEGS' => '🛫',
             'ASK_PASSENGERS' => '👥',
             'ASK_AIRCRAFT_PREFERENCE' => '🛩️',
-            'ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS' => '✅',
             'ASK_OTHER_SERVICES' => '🧳',
             'ASK_NAME' => '👤',
             'ASK_EMAIL' => '📧',
@@ -1218,7 +1222,7 @@ class FlightQuoteFlowHandler
             'time' => '🕐 Puedes decirme algo como 8 de la noche, 8 pm o 20:00.',
             'passengers' => '👥 Puedes decir 4, somos 4 o cuatro pasajeros.',
             'boolean' => '✅ Responde sí o no.',
-            'trip' => '✈️ Puedes decir sólo ida, ida y vuelta o multidestino.',
+            'trip' => $this->tripTypePrompt($flightRequest),
             'legs' => $this->legHelp($conversation, $flightRequest),
             'location' => $this->prompt($state, $flightRequest),
             'email' => '📧 Escribe tu correo, por ejemplo nombre@correo.com.',
@@ -1586,7 +1590,7 @@ class FlightQuoteFlowHandler
     }
 
     /**
-     * @return array{origin?:string,destination?:string,departure_date?:string,departure_time?:string,passengers?:int,trip_type?:string,legs?:array<int, array{origin:string,destination:string,departure_date:null,departure_time:null}>,is_time_flexible?:bool}
+     * @return array{origin?:string,destination?:string,departure_date?:string,departure_time?:string,passengers?:int,trip_type?:string,legs?:array<int, array{origin:string,destination:string,departure_date:null,departure_time:null}>}
      */
     private function extractFlightDetails(string $message): array
     {
@@ -1663,15 +1667,6 @@ class FlightQuoteFlowHandler
             $details['trip_type'] = 'ROUND_TRIP';
         } elseif (str_contains($normalized, 'multidestino') || str_contains($normalized, 'multi destino')) {
             $details['trip_type'] = 'MULTI_CITY';
-        }
-
-        if (preg_match('/\b(?:horario|hora|salida)\s+(?:fijo|fija|exacto|exacta)\b/u', $normalized) === 1
-            || preg_match('/\b(?:no|sin)\s+(?:tengo\s+)?(?:horario\s+)?flexibilidad\b/u', $normalized) === 1
-            || preg_match('/\b(?:no|nada)\s+flexible\b/u', $normalized) === 1) {
-            $details['is_time_flexible'] = false;
-        } elseif (preg_match('/\b(?:horario|hora|salida|itinerario)?\s*(?:es|soy|somos|estoy|estamos|puedo|podemos)?\s*flexible(?:s)?\b/u', $normalized) === 1
-            || preg_match('/\b(?:horario|hora|salida)\s+abiert[ao]\b/u', $normalized) === 1) {
-            $details['is_time_flexible'] = true;
         }
 
         return $details;
@@ -2305,7 +2300,7 @@ class FlightQuoteFlowHandler
             '5', 'pasajeros' => ['ASK_PASSENGERS'],
             '6', 'viaje' => ['ASK_TRIP_TYPE'],
             '7', 'aeronave' => ['ASK_AIRCRAFT_PREFERENCE'],
-            '8', 'servicios' => ['ASK_TIME_FLEXIBILITY', 'ASK_ALTERNATE_AIRPORTS', 'ASK_OTHER_SERVICES'],
+            '8', 'servicios' => ['ASK_OTHER_SERVICES'],
             '9', 'datos personales' => ['ASK_NAME', 'ASK_EMAIL', 'ASK_COMPANY'],
             '10', 'presupuesto' => ['ASK_BUDGET'],
             '11', 'observaciones' => ['ASK_NOTES'],
@@ -2479,6 +2474,18 @@ class FlightQuoteFlowHandler
         };
     }
 
+    private function tripTypePrompt(WhatsAppFlightRequest $flightRequest): string
+    {
+        $time = $this->displayTime($flightRequest->departure_time) ?? 'la hora indicada';
+
+        return "Perfecto, dejamos la salida a las {$time}.\n\n"
+            ."✈️ ¿Será:\n\n"
+            ."1️⃣ Sólo ida\n"
+            ."2️⃣ Ida y vuelta\n"
+            ."3️⃣ Multidestino\n\n"
+            .'👉 Responde con el número de la opción.';
+    }
+
     private function dateTimeLine(mixed $date, ?string $time): string
     {
         return trim(implode(' a las ', array_filter([
@@ -2622,9 +2629,9 @@ class FlightQuoteFlowHandler
         return match (true) {
             in_array($message, ['1', 'one_way', 'one way', 'sencillo', 'solo ida', 'ida', 'solo de ida', 'sin regreso', 'ow'], true)
                 || preg_match('/\b(?:solo ida|solo de ida|sin regreso|sencillo)\b/u', $message) === 1 => 'ONE_WAY',
-            in_array($message, ['2', 'round_trip', 'round trip', 'redondo', 'viaje redondo', 'ida y vuelta', 'ida y regreso', 'regreso', 'rt'], true)
-                || preg_match('/\b(?:ida y vuelta|ida y regreso|viaje redondo|redondo)\b/u', $message) === 1 => 'ROUND_TRIP',
-            in_array($message, ['3', 'multi_city', 'multi city', 'multidestino', 'multi destino', 'varios destinos'], true)
+            in_array($message, ['2', 'round_trip', 'round trip', 'redondo', 'viaje redondo', 'ida y vuelta', 'ida y regreso', 'regreso', 'vuelta tambien', 'vuelta también', 'rt'], true)
+                || preg_match('/\b(?:ida y vuelta|ida y regreso|viaje redondo|redondo|vuelta tambien|vuelta también)\b/u', $message) === 1 => 'ROUND_TRIP',
+            in_array($message, ['3', 'multi_destination', 'multi destination', 'multi_city', 'multi city', 'multidestino', 'multi destino', 'varios destinos'], true)
                 || preg_match('/\b(?:multidestino|multi destino|varios destinos)\b/u', $message) === 1 => 'MULTI_CITY',
             default => null,
         };
@@ -2640,7 +2647,7 @@ class FlightQuoteFlowHandler
             'count' => '⚠️ Necesito un número para '.$this->normalize($label).'.',
             'boolean' => '⚠️ Necesito una respuesta de sí o no.',
             'email' => '⚠️ Ese correo no parece válido.',
-            'trip' => '⚠️ Necesito saber si es sólo ida, ida y vuelta o multidestino.',
+            'trip' => '⚠️ Elige una opción válida.',
             'money' => "⚠️ No alcancé a identificar un presupuesto.\n¿Me puedes dar un monto aproximado? Por ejemplo: 20,000 USD.\nSi todavía no tienes uno, puedes decirme sin presupuesto definido.",
             default => '⚠️ No entendí ese dato.',
         };

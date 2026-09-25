@@ -39,12 +39,13 @@ class WhatsAppInvariantTest extends TestCase
         $flight = $this->completeFlight([
             'aircraft_preference' => null,
             'is_time_flexible' => null,
+            'other_services' => null,
         ]);
         $flight->conversation()->update(['state' => 'ASK_AIRCRAFT_PREFERENCE']);
 
         $result = $this->answer($flight, 'CESSNA 550');
 
-        $this->assertSame('ASK_TIME_FLEXIBILITY', $result['state']);
+        $this->assertSame('ASK_OTHER_SERVICES', $result['state']);
         $this->assertSame('CESSNA 550', $flight->refresh()->aircraft_preference);
         $this->assertStringNotContainsString('exclusivamente en renta', $result['message']);
     }

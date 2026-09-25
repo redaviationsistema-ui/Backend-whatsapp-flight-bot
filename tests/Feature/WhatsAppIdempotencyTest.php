@@ -732,22 +732,6 @@ class WhatsAppIdempotencyTest extends TestCase
         ]);
     }
 
-    public function test_natural_boolean_answer_is_normalized_before_update(): void
-    {
-        Http::preventStrayRequests();
-        Http::fake(['https://graph.facebook.com/*/123/messages' => Http::response(['messages' => [['id' => 'out.time-flexibility']]])]);
-        $conversation = WhatsAppConversation::factory()
-            ->for(WhatsAppContact::factory()->state(['phone_number' => '5215512345678']), 'contact')
-            ->create(['state' => 'ASK_TIME_FLEXIBILITY']);
-        WhatsAppFlightRequest::factory()->for($conversation, 'conversation')->create(['is_time_flexible' => null]);
-
-        $this->webhook(['messages' => [[...$this->incomingMessage(), 'id' => 'in.time-flexibility', 'text' => ['body' => 'por el momento no']]]])->assertOk();
-
-        $flight = $conversation->flightRequest()->sole();
-        $this->assertSame('ASK_ALTERNATE_AIRPORTS', $conversation->refresh()->state);
-        $this->assertFalse($flight->refresh()->is_time_flexible);
-    }
-
     public function test_invalid_email_keeps_state_without_update(): void
     {
         Http::preventStrayRequests();

@@ -52,8 +52,6 @@ class WhatsAppFlowRouter
         'ASK_LEGS',
         'ASK_PASSENGERS',
         'ASK_AIRCRAFT_PREFERENCE',
-        'ASK_TIME_FLEXIBILITY',
-        'ASK_ALTERNATE_AIRPORTS',
         'ASK_OTHER_SERVICES',
         'ASK_NAME',
         'ASK_EMAIL',

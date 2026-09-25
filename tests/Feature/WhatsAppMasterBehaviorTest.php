@@ -152,21 +152,6 @@ class WhatsAppMasterBehaviorTest extends TestCase
         ]);
     }
 
-    #[TestWith(['ASK_TIME_FLEXIBILITY', 'No', 'is_time_flexible', false, 'ASK_ALTERNATE_AIRPORTS'])]
-    #[TestWith(['ASK_TIME_FLEXIBILITY', 'Sí', 'is_time_flexible', true, 'ASK_ALTERNATE_AIRPORTS'])]
-    #[TestWith(['ASK_ALTERNATE_AIRPORTS', 'No', 'allow_alternate_airports', false, 'ASK_OTHER_SERVICES'])]
-    public function test_contextual_yes_no_answers_update_only_current_boolean(string $state, string $input, string $field, bool $expected, string $nextState): void
-    {
-        $flight = WhatsAppFlightRequest::factory()
-            ->for(WhatsAppConversation::factory()->state(['state' => $state]), 'conversation')
-            ->create();
-
-        $result = $this->answer($flight, $input);
-
-        $this->assertSame($nextState, $result['state']);
-        $this->assertSame($expected, $flight->refresh()->{$field});
-    }
-
     #[TestWith(['No', 'START'])]
     #[TestWith(['Sí', 'ASK_ORIGIN'])]
     public function test_out_of_scope_follow_up_yes_no_is_contextual_and_clean(string $input, string $expectedState): void

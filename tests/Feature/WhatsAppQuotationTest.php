@@ -37,7 +37,6 @@ class WhatsAppQuotationTest extends TestCase
         $this->assertNull($flight->company);
         $summary = app(WhatsAppChatbotService::class)->summaryMessage($flight);
         $this->assertStringContainsString('Perfecto, esto es lo que tengo hasta ahora:', $summary);
-        $this->assertStringContainsString('Horario flexible', $summary);
         $this->assertStringContainsString('Juan Pérez', $summary);
         Http::assertNothingSent();
 
@@ -183,7 +182,6 @@ class WhatsAppQuotationTest extends TestCase
     #[TestWith(['ASK_EMAIL', 'correo-invalido'])]
     #[TestWith(['ASK_RETURN_DATE', '2026-10-01'])]
     #[TestWith(['ASK_RETURN_TIME', '14:00'])]
-    #[TestWith(['ASK_TIME_FLEXIBILITY', 'quizá'])]
     public function test_invalid_answers_do_not_advance_or_confirm(string $state, string $input): void
     {
         $this->travelTo(Carbon::parse('2026-09-20 12:00:00', 'America/Mexico_City'));
@@ -563,33 +561,61 @@ class WhatsAppQuotationTest extends TestCase
         $this->assertStringContainsString('actualicé los pasajeros', $result['message']);
     }
 
-    public function test_natural_flexible_schedule_phrase_is_preserved_as_flexible(): void
+    public function test_trip_type_prompt_includes_formatted_departure_time_and_numbered_options(): void
     {
-        $this->travelTo(Carbon::parse('2026-09-20 12:00:00', 'America/Mexico_City'));
         $flight = WhatsAppFlightRequest::factory()
-            ->for(WhatsAppConversation::factory()->state(['state' => 'START']), 'conversation')
-            ->create();
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_DEPARTURE_TIME']), 'conversation')
+            ->create([
+                'origin' => 'Toluca',
+                'destination' => 'Cancún',
+                'departure_date' => '2026-10-02',
+            ]);
 
-        $this->answer($flight, 'Necesito volar de Toluca a Cancún el 2 de octubre a las 3 de la tarde, somos 4 pasajeros. Mi horario es flexible.');
+        $result = $this->answer($flight, '14:30');
 
-        $this->assertTrue($flight->refresh()->is_time_flexible);
-        $this->assertStringContainsString('Horario flexible', app(WhatsAppChatbotService::class)->summaryMessage($flight));
+        $this->assertSame('ASK_TRIP_TYPE', $result['state']);
+        $this->assertSame("Perfecto, dejamos la salida a las 2:30 pm.\n\n✈️ ¿Será:\n\n1️⃣ Sólo ida\n2️⃣ Ida y vuelta\n3️⃣ Multidestino\n\n👉 Responde con el número de la opción.", $result['message']);
     }
 
-    public function test_flexible_answer_to_time_flexibility_question_means_true(): void
+    #[TestWith(['1', 'ONE_WAY'])]
+    #[TestWith(['2', 'ROUND_TRIP'])]
+    #[TestWith(['3', 'MULTI_CITY'])]
+    #[TestWith(['ida', 'ONE_WAY'])]
+    #[TestWith(['ida y vuelta', 'ROUND_TRIP'])]
+    #[TestWith(['vuelta también', 'ROUND_TRIP'])]
+    #[TestWith(['multidestino', 'MULTI_CITY'])]
+    public function test_trip_type_accepts_numbered_options_and_legacy_text(string $input, string $expected): void
     {
         $flight = WhatsAppFlightRequest::factory()
-            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_TIME_FLEXIBILITY']), 'conversation')
-            ->create();
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_TRIP_TYPE']), 'conversation')
+            ->create([
+                'departure_time' => '14:30:00',
+            ]);
 
-        $result = $this->answer($flight, 'flexible');
+        $this->answer($flight, $input);
 
-        $this->assertTrue($flight->refresh()->is_time_flexible);
-        $this->assertSame('ASK_ALTERNATE_AIRPORTS', $result['state']);
+        $this->assertSame($expected, $flight->refresh()->trip_type);
+    }
+
+    public function test_invalid_trip_type_answer_repeats_numbered_options(): void
+    {
+        $flight = WhatsAppFlightRequest::factory()
+            ->for(WhatsAppConversation::factory()->state(['state' => 'ASK_TRIP_TYPE']), 'conversation')
+            ->create([
+                'departure_time' => '14:30:00',
+            ]);
+
+        $result = $this->answer($flight, 'quizá');
+
+        $this->assertSame('ASK_TRIP_TYPE', $result['state']);
+        $this->assertStringContainsString('⚠️ Elige una opción válida.', $result['message']);
+        $this->assertStringContainsString('1️⃣ Sólo ida', $result['message']);
+        $this->assertStringContainsString('2️⃣ Ida y vuelta', $result['message']);
+        $this->assertStringContainsString('3️⃣ Multidestino', $result['message']);
     }
 
     #[TestWith(['ASK_PASSENGERS', '9', 'passengers', 9, 'ASK_AIRCRAFT_PREFERENCE', '9 pasajeros'])]
-    #[TestWith(['ASK_AIRCRAFT_PREFERENCE', 'Cabina amplia', 'aircraft_preference', 'Cabina amplia', 'ASK_TIME_FLEXIBILITY', 'Cabina amplia'])]
+    #[TestWith(['ASK_AIRCRAFT_PREFERENCE', 'Cabina amplia', 'aircraft_preference', 'Cabina amplia', 'ASK_OTHER_SERVICES', 'Cabina amplia'])]
     #[TestWith(['ASK_NAME', 'María García', 'client_name', 'María García', 'ASK_EMAIL', 'María García'])]
     #[TestWith(['ASK_EMAIL', 'maria@example.org', 'client_email', 'maria@example.org', 'ASK_NOTES', 'maria@example.org'])]
     #[TestWith(['ASK_COMPANY', 'omitir', 'company', null, 'ASK_NOTES', 'Perfecto, esto es lo que tengo hasta ahora'])]
@@ -616,7 +642,7 @@ class WhatsAppQuotationTest extends TestCase
             '2' => ['2026-10-05', '17:00'],
             '3' => ['Monterrey', '2026-10-05', '15:00', 'Toluca', '2026-10-07', '14:30', 'listo'],
             default => [],
-        }, '4', 'sin preferencia', 'sí', 'sí', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', '50000 USD', 'ninguna'];
+        }, '4', 'sin preferencia', 'ninguno', 'Juan Pérez', 'juan@example.com', 'omitir', '50000 USD', 'ninguna'];
         foreach ($answers as $answer) {
             $this->answer($flight, $answer);
         }
