@@ -35,7 +35,7 @@ class QuotePreviewControllerTest extends TestCase
             ],
             'quote_engine.currency' => 'USD',
             'quote_engine.tables.national_airports' => 'aeropuertos_mexico',
-            'quote_engine.tables.international_airports' => 'airports_geo',
+            'quote_engine.tables.international_airports' => 'aeropuertos_mexico',
             'quote_engine.tables.aircraft' => 'aircraft_fleet',
             'quote_engine.tables.reservations' => 'reservations',
             'quote_engine.tables.blocked_dates' => 'blocked_dates',
@@ -204,6 +204,51 @@ class QuotePreviewControllerTest extends TestCase
         $response
             ->assertOk()
             ->assertJsonPath('options.0.customer_routes.0.origin.iata', 'MTY');
+    }
+
+    public function test_preview_resolves_mexico_airports_by_city_airport_name_iata_and_icao_without_airports_geo(): void
+    {
+        $this->seedAirports();
+        $this->seedAircraft();
+        $this->seedEligibility();
+        $this->quoteDb()->flushQueryLog();
+        $this->quoteDb()->enableQueryLog();
+
+        $response = $this->postJson('/api/v1/client/quotes/preview', [
+            'passengers' => 4,
+            'legs' => [[
+                'origin' => ['city' => 'toluca'],
+                'destination' => ['name' => 'morelia'],
+                'departure_datetime' => '2026-10-15T14:30:00',
+            ], [
+                'origin' => ['icao' => 'MMMM'],
+                'destination' => ['iata' => 'cun'],
+                'departure_datetime' => '2026-10-16T14:30:00',
+            ], [
+                'origin' => ['icao' => 'MMUN'],
+                'destination' => ['iata' => 'TLC'],
+                'departure_datetime' => '2026-10-17T14:30:00',
+            ]],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('options.0.customer_routes.0.origin.icao', 'MMTO')
+            ->assertJsonPath('options.0.customer_routes.0.destination.icao', 'MMMM')
+            ->assertJsonPath('options.0.customer_routes.1.origin.iata', 'MLM')
+            ->assertJsonPath('options.0.customer_routes.1.destination.iata', 'CUN')
+            ->assertJsonPath('options.0.customer_routes.2.origin.icao', 'MMUN');
+
+        $queries = collect($this->quoteDb()->getQueryLog())->pluck('query')->implode("\n");
+
+        $this->assertStringContainsString('aeropuertos_mexico', $queries);
+        $this->assertStringNotContainsString('airports_geo', $queries);
+        $this->assertStringContainsString('"CIUDAD"', $queries);
+        $this->assertStringContainsString('"AEROPUERTO"', $queries);
+        $this->assertStringContainsString('"IATA"', $queries);
+        $this->assertStringContainsString('"ICAO"', $queries);
+        $this->assertStringNotContainsString('"iata"', $queries);
+        $this->quoteDb()->disableQueryLog();
     }
 
     public function test_preview_keeps_aircraft_fleet_iata_lowercase_for_base_airport_lookup(): void
@@ -378,7 +423,6 @@ class QuotePreviewControllerTest extends TestCase
         $this->assertSame([
             'aircraft_fleet' => true,
             'aeropuertos_mexico' => true,
-            'airports_geo' => true,
             'blocked_dates' => true,
             'reservations' => true,
         ], $health->check()['tables']);
@@ -400,18 +444,6 @@ class QuotePreviewControllerTest extends TestCase
             $table->decimal('LONGITUDE', 10, 6);
             $table->unsignedInteger('ELEVATION_FT')->nullable();
             $table->unsignedInteger('runway_length_m')->nullable();
-        });
-
-        $schema->create('airports_geo', function (Blueprint $table): void {
-            $table->id();
-            $table->string('iata')->nullable();
-            $table->string('icao')->nullable();
-            $table->string('name')->nullable();
-            $table->string('city')->nullable();
-            $table->string('state')->nullable();
-            $table->string('country')->nullable();
-            $table->decimal('lat', 10, 6);
-            $table->decimal('lng', 10, 6);
         });
 
         $schema->create('aircraft_fleet', function (Blueprint $table): void {
@@ -461,6 +493,7 @@ class QuotePreviewControllerTest extends TestCase
             ['ID' => 1, 'IATA' => 'TLC', 'ICAO' => 'MMTO', 'AEROPUERTO' => 'Toluca', 'CIUDAD' => 'Toluca', 'ESTADO' => 'Estado de México', 'COUNTRY' => 'MX', 'LATITUDE' => 19.337100, 'LONGITUDE' => -99.566000, 'ELEVATION_FT' => 8466, 'runway_length_m' => 4200],
             ['ID' => 2, 'IATA' => 'CUN', 'ICAO' => 'MMUN', 'AEROPUERTO' => 'Cancun', 'CIUDAD' => 'Cancun', 'ESTADO' => 'Quintana Roo', 'COUNTRY' => 'MX', 'LATITUDE' => 21.036500, 'LONGITUDE' => -86.877100, 'ELEVATION_FT' => 22, 'runway_length_m' => 3500],
             ['ID' => 3, 'IATA' => 'MTY', 'ICAO' => 'MMMY', 'AEROPUERTO' => 'Monterrey', 'CIUDAD' => 'Monterrey', 'ESTADO' => 'Nuevo León', 'COUNTRY' => 'MX', 'LATITUDE' => 25.778500, 'LONGITUDE' => -100.107000, 'ELEVATION_FT' => 1278, 'runway_length_m' => 3000],
+            ['ID' => 4, 'IATA' => 'MLM', 'ICAO' => 'MMMM', 'AEROPUERTO' => 'Morelia', 'CIUDAD' => 'Morelia', 'ESTADO' => 'Michoacán', 'COUNTRY' => 'MX', 'LATITUDE' => 19.849900, 'LONGITUDE' => -101.025500, 'ELEVATION_FT' => 6033, 'runway_length_m' => 3400],
         ];
 
         foreach ($airports as $airport) {

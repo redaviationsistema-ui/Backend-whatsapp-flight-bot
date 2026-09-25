@@ -132,10 +132,9 @@ class SqlQuoteDataRepository
      */
     private function airportTables(): array
     {
-        return [
-            (string) config('quote_engine.tables.national_airports'),
-            (string) config('quote_engine.tables.international_airports'),
-        ];
+        return array_values(array_unique([
+            (string) config('quote_engine.tables.national_airports', 'aeropuertos_mexico'),
+        ]));
     }
 
     /**
@@ -197,12 +196,21 @@ class SqlQuoteDataRepository
             return null;
         }
 
-        $normalizedValue = is_string($value) && $normalizeString ? mb_strtoupper(trim($value)) : $value;
+        $normalizedValue = is_string($value) ? trim($value) : $value;
+        if (is_string($normalizedValue) && $normalizeString) {
+            $normalizedValue = mb_strtoupper($normalizedValue);
+        }
 
         return (clone $query)
-            ->where(function ($query) use ($availableColumns, $normalizedValue): void {
+            ->where(function ($query) use ($availableColumns, $normalizedValue, $normalizeString): void {
                 foreach ($availableColumns as $index => $column) {
                     $method = $index === 0 ? 'where' : 'orWhere';
+                    if (is_string($normalizedValue) && ! $normalizeString && ! is_numeric($normalizedValue)) {
+                        $query->{$method.'Raw'}('LOWER('.$this->database()->getQueryGrammar()->wrap($column).') = ?', [mb_strtolower($normalizedValue)]);
+
+                        continue;
+                    }
+
                     $query->{$method}($column, $normalizedValue);
                 }
             })

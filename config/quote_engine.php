@@ -14,7 +14,7 @@ return [
 
     'tables' => [
         'national_airports' => env('QUOTE_ENGINE_NATIONAL_AIRPORTS_TABLE', 'aeropuertos_mexico'),
-        'international_airports' => env('QUOTE_ENGINE_INTERNATIONAL_AIRPORTS_TABLE', 'airports_geo'),
+        'international_airports' => env('QUOTE_ENGINE_INTERNATIONAL_AIRPORTS_TABLE', 'aeropuertos_mexico'),
         'aircraft' => env('QUOTE_ENGINE_AIRCRAFT_TABLE', 'aircraft_fleet'),
         'reservations' => env('QUOTE_ENGINE_RESERVATIONS_TABLE', 'reservations'),
         'blocked_dates' => env('QUOTE_ENGINE_BLOCKED_DATES_TABLE', 'blocked_dates'),
